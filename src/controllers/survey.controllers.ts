@@ -5,6 +5,7 @@ import {
   type CreateRespondentInput,
   type CreateSurveyFormInput,
   type CreateSurveyItemInput,
+  type CreateSurveySeriesInput,
   type CreateSurveySectionInput,
   type SubmitSurveyResponseInput,
 } from "../services/survey.services.js";
@@ -160,6 +161,9 @@ function getSurveySections(value: unknown): CreateSurveySectionInput[] {
 function getCreateSurveyFormInput(body: Record<string, unknown>): CreateSurveyFormInput {
   return {
     code: getFormCode(toOptionalString(body.code) ?? ""),
+    surveySeriesId: toNullableString(body.surveySeriesId),
+    surveyStepNumber: toNumber(body.surveyStepNumber),
+    surveySeriesTitle: toNullableString(body.surveySeriesTitle),
     title: String(body.title ?? ""),
     description: toNullableString(body.description),
     studyTitle: toNullableString(body.studyTitle),
@@ -174,6 +178,17 @@ function getCreateSurveyFormInput(body: Record<string, unknown>): CreateSurveyFo
     respondentInformationRequired: toBoolean(body.respondentInformationRequired, true),
     isActive: toBoolean(body.isActive, true),
     sections: getSurveySections(body.sections),
+  };
+}
+
+
+function getCreateSurveySeriesInput(body: Record<string, unknown>): CreateSurveySeriesInput {
+  const forms = Array.isArray(body.forms) ? body.forms : [];
+
+  return {
+    surveySeriesId: toNullableString(body.surveySeriesId),
+    surveySeriesTitle: String(body.surveySeriesTitle ?? body.title ?? ""),
+    forms: forms.map((form) => getCreateSurveyFormInput(form as Record<string, unknown>)),
   };
 }
 
@@ -216,6 +231,19 @@ export async function createSurveyForm(req: Request, res: Response) {
     res.status(201).json({
       message: "Survey form created successfully.",
       data: form,
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+}
+
+export async function createSurveySeries(req: Request, res: Response) {
+  try {
+    const forms = await surveyService.createSurveySeries(getCreateSurveySeriesInput(req.body ?? {}));
+
+    res.status(201).json({
+      message: "Survey series created successfully.",
+      data: forms,
     });
   } catch (error) {
     sendError(res, error);

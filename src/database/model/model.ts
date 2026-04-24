@@ -89,7 +89,7 @@ export const VOLUNTARY_PARTICIPATION_NOTE = EXISTING_PROCESS_VOLUNTARY_NOTE;
 
 export type TableName = (typeof TABLES)[keyof typeof TABLES];
 export type LikertValue = 1 | 2 | 3 | 4 | 5;
-export type SurveyFormCode = "existing_process_assessment" | "system_evaluation" | "respondent_system_experience";
+export type SurveyFormCode = string;
 export type LikertScaleOption = {
   value: LikertValue;
   label: string;
@@ -116,6 +116,9 @@ export type Respondent = {
 export type SurveyForm = {
   id: string;
   code: SurveyFormCode;
+  surveySeriesId?: string | null;
+  surveyStepNumber: number;
+  surveySeriesTitle?: string | null;
   title: string;
   description: string;
   studyTitle?: string | null;
@@ -190,6 +193,9 @@ export type QuestionnaireSectionSeed = {
 
 export type QuestionnaireFormSeed = {
   code: SurveyFormCode;
+  surveySeriesId?: string | null;
+  surveyStepNumber?: number;
+  surveySeriesTitle?: string | null;
   title: string;
   description: string;
   studyTitle: string;
