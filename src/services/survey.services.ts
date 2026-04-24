@@ -154,6 +154,10 @@ export type CreateSurveySeriesInput = {
   forms: CreateSurveyFormInput[];
 };
 
+export type UpdateSurveyFormRespondentInformationInput = {
+  respondentInformationRequired: boolean;
+};
+
 export type SubmitSurveyAnswerInput = {
   itemId: string;
   rating: LikertValue;
@@ -466,6 +470,46 @@ async function getSurveyFormByCode(executor: DatabaseExecutor, formCode: SurveyF
       LIMIT 1
     `,
     [formCode],
+  );
+
+  const row = result.rows[0];
+  return row ? mapSurveyForm(row) : null;
+}
+
+async function updateSurveyFormRespondentInformation(
+  formId: string,
+  input: UpdateSurveyFormRespondentInformationInput,
+) {
+  const result = await getPool().query<SurveyFormRow>(
+    `
+      UPDATE ${TABLES.surveyForms}
+      SET
+        respondent_information_required = $2,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING
+        id,
+        code,
+        survey_series_id,
+        survey_step_number,
+        survey_series_title,
+        title,
+        description,
+        study_title,
+        document_header,
+        introduction,
+        researchers,
+        adviser,
+        instruction,
+        scale,
+        voluntary_note,
+        signature_label,
+        respondent_information_required,
+        is_active,
+        created_at,
+        updated_at
+    `,
+    [formId, input.respondentInformationRequired],
   );
 
   const row = result.rows[0];
@@ -884,6 +928,10 @@ export const surveyService = {
 
   async getSurveyFormByCode(formCode: SurveyFormCode) {
     return getSurveyFormByCode(getPool(), formCode);
+  },
+
+  async updateSurveyFormRespondentInformation(formId: string, input: UpdateSurveyFormRespondentInformationInput) {
+    return updateSurveyFormRespondentInformation(formId, input);
   },
 
   async getQuestionnaireByFormId(formId: string): Promise<SurveyQuestionnaireForm | null> {

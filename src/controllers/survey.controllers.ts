@@ -8,6 +8,7 @@ import {
   type CreateSurveySeriesInput,
   type CreateSurveySectionInput,
   type SubmitSurveyResponseInput,
+  type UpdateSurveyFormRespondentInformationInput,
 } from "../services/survey.services.js";
 import type { LikertScaleOption, LikertValue, RespondentRole, SurveyFormCode } from "../database/model/model.js";
 
@@ -192,6 +193,15 @@ function getCreateSurveySeriesInput(body: Record<string, unknown>): CreateSurvey
   };
 }
 
+
+function getUpdateSurveyFormRespondentInformationInput(
+  body: Record<string, unknown>,
+): UpdateSurveyFormRespondentInformationInput {
+  return {
+    respondentInformationRequired: toBoolean(body.respondentInformationRequired, false),
+  };
+}
+
 function getRespondentInput(body: Record<string, unknown>): CreateRespondentInput {
   return {
     fullName: toNullableString(body.fullName),
@@ -297,6 +307,31 @@ export async function getSurveyFormByCode(req: Request, res: Response) {
     }
 
     res.status(200).json({
+      data: form,
+    });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+}
+
+
+export async function updateSurveyFormRespondentInformation(req: Request, res: Response) {
+  try {
+    const formId = getRouteParam(req.params.formId, "formId");
+    const form = await surveyService.updateSurveyFormRespondentInformation(
+      formId,
+      getUpdateSurveyFormRespondentInformationInput(req.body ?? {}),
+    );
+
+    if (!form) {
+      res.status(404).json({
+        message: "Survey form not found.",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      message: "Survey respondent information setting updated successfully.",
       data: form,
     });
   } catch (error) {

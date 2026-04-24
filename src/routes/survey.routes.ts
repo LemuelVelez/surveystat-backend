@@ -13,6 +13,7 @@ import {
   listSurveyForms,
   listSurveyResponses,
   submitSurveyResponse,
+  updateSurveyFormRespondentInformation,
 } from "../controllers/survey.controllers.js";
 
 const router = Router();
@@ -20,6 +21,7 @@ const router = Router();
 router.get("/forms", listSurveyForms);
 router.post("/forms", createSurveyForm);
 router.post("/series", createSurveySeries);
+router.patch("/forms/:formId/respondent-information", updateSurveyFormRespondentInformation);
 router.get("/forms/code/:formCode", getSurveyFormByCode);
 router.get("/forms/:formId", getSurveyFormById);
 
