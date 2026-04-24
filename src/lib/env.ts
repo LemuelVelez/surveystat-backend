@@ -58,3 +58,11 @@ export const env = {
 export function isProduction() {
   return env.nodeEnv === "production";
 }
+
+export function getServerAppUrl() {
+  if (env.serverPublicUrl) {
+    return env.serverPublicUrl;
+  }
+
+  return `http://localhost:${env.port}`;
+}

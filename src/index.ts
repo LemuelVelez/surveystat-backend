@@ -1,24 +1,23 @@
 import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
 import healthRoutes from "./routes/health.routes.js";
-
-dotenv.config();
+import { configureMiddleware } from "./middleware/middleware.js";
+import { env, getServerAppUrl } from "./lib/env.js";
 
 const app = express();
-const port = Number(process.env.PORT) || 8080;
+const port = env.port;
 
-app.use(cors());
-app.use(express.json());
+configureMiddleware(app);
 
 app.use("/health", healthRoutes);
 
 app.get("/", (_req, res) => {
   res.json({
     message: "SurveyStat backend API is running",
+    url: getServerAppUrl(),
   });
 });
 
 app.listen(port, () => {
   console.log(`SurveyStat backend API running on port ${port}`);
+  console.log(`Server app URL: ${getServerAppUrl()}`);
 });
