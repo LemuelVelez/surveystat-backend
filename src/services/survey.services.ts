@@ -2,6 +2,7 @@ import { Pool, type PoolClient, type QueryResultRow } from "pg";
 
 import { assertDatabaseConfig, getDatabaseConfig } from "../lib/db.js";
 import {
+  getLikertInterpretation,
   LIKERT_SCALE,
   TABLES,
   type LikertScale,
@@ -94,6 +95,30 @@ type SurveyAnswerRow = QueryResultRow & {
   updated_at: Date;
 };
 
+type SurveyResponseSummaryRow = SurveyResponseRow & {
+  form_code: SurveyFormCode;
+  form_title: string;
+  respondent_full_name: string | null;
+  respondent_email: string | null;
+  respondent_role: RespondentRole | null;
+  respondent_office: string | null;
+  respondent_program: string | null;
+  answer_count: number | string;
+  weighted_mean: number | string | null;
+};
+
+type SurveyAnswerDetailRow = SurveyAnswerRow & {
+  form_id: string;
+  form_code: SurveyFormCode;
+  form_title: string;
+  section_id: string;
+  section_code: string;
+  section_title: string;
+  item_code: string;
+  item_statement: string;
+  item_sort_order: number;
+};
+
 export type SurveyQuestionnaireItem = SurveyItem;
 
 export type SurveyQuestionnaireSection = SurveySection & {
@@ -176,6 +201,34 @@ export type SubmitSurveyResponseInput = {
 export type SubmittedSurveyResponse = SurveyResponse & {
   respondent: Respondent | null;
   answers: SurveyAnswer[];
+};
+
+export type SurveyResponseSummary = SurveyResponse & {
+  formCode: SurveyFormCode;
+  formTitle: string;
+  respondentFullName?: string | null;
+  respondentEmail?: string | null;
+  respondentRole?: RespondentRole | null;
+  respondentOffice?: string | null;
+  respondentProgram?: string | null;
+  answerCount: number;
+  weightedMean: number;
+  interpretation: string;
+  meanRange: string;
+};
+
+export type SurveyResponseAnswer = SurveyAnswer & {
+  formId: string;
+  formCode: SurveyFormCode;
+  formTitle: string;
+  sectionId: string;
+  sectionCode: string;
+  sectionTitle: string;
+  itemCode: string;
+  itemStatement: string;
+  itemSortOrder: number;
+  interpretation: string;
+  meanRange: string;
 };
 
 export type ListSurveyResponsesOptions = {
@@ -386,6 +439,46 @@ function mapSurveyAnswer(row: SurveyAnswerRow): SurveyAnswer {
     rating: row.rating,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapSurveyResponseSummary(row: SurveyResponseSummaryRow): SurveyResponseSummary {
+  const weightedMean = Number(row.weighted_mean ?? 0);
+  const interpretation = getLikertInterpretation(weightedMean);
+
+  return {
+    ...mapSurveyResponse(row),
+    formCode: row.form_code,
+    formTitle: row.form_title,
+    respondentFullName: row.respondent_full_name,
+    respondentEmail: row.respondent_email,
+    respondentRole: row.respondent_role,
+    respondentOffice: row.respondent_office,
+    respondentProgram: row.respondent_program,
+    answerCount: Number(row.answer_count ?? 0),
+    weightedMean,
+    interpretation: weightedMean > 0 ? interpretation.label : "No data",
+    meanRange: weightedMean > 0 ? interpretation.meanRange : "N/A",
+  };
+}
+
+function mapSurveyResponseAnswer(row: SurveyAnswerDetailRow): SurveyResponseAnswer {
+  const rating = Number(row.rating) as LikertValue;
+  const interpretation = getLikertInterpretation(rating);
+
+  return {
+    ...mapSurveyAnswer(row),
+    formId: row.form_id,
+    formCode: row.form_code,
+    formTitle: row.form_title,
+    sectionId: row.section_id,
+    sectionCode: row.section_code,
+    sectionTitle: row.section_title,
+    itemCode: row.item_code,
+    itemStatement: row.item_statement,
+    itemSortOrder: row.item_sort_order,
+    interpretation: interpretation.label,
+    meanRange: interpretation.meanRange,
   };
 }
 
@@ -1097,7 +1190,7 @@ export const surveyService = {
     values.push(normalizeOffset(options.offset));
     const offsetPlaceholder = `$${values.length}`;
 
-    const result = await pool.query<SurveyResponseRow>(
+    const result = await pool.query<SurveyResponseSummaryRow>(
       `
         SELECT
           sr.id,
@@ -1107,10 +1200,37 @@ export const surveyService = {
           sr.voluntary_consent,
           sr.submitted_at,
           sr.created_at,
-          sr.updated_at
+          sr.updated_at,
+          sf.code AS form_code,
+          sf.title AS form_title,
+          r.full_name AS respondent_full_name,
+          r.email AS respondent_email,
+          r.role AS respondent_role,
+          r.office AS respondent_office,
+          r.program AS respondent_program,
+          COUNT(sa.id)::int AS answer_count,
+          COALESCE(ROUND(AVG(sa.rating)::numeric, 2), 0)::float8 AS weighted_mean
         FROM ${TABLES.surveyResponses} sr
         JOIN ${TABLES.surveyForms} sf ON sf.id = sr.form_id
+        LEFT JOIN ${TABLES.respondents} r ON r.id = sr.respondent_id
+        LEFT JOIN ${TABLES.surveyAnswers} sa ON sa.response_id = sr.id
         ${filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : ""}
+        GROUP BY
+          sr.id,
+          sr.form_id,
+          sr.respondent_id,
+          sr.respondent_signature,
+          sr.voluntary_consent,
+          sr.submitted_at,
+          sr.created_at,
+          sr.updated_at,
+          sf.code,
+          sf.title,
+          r.full_name,
+          r.email,
+          r.role,
+          r.office,
+          r.program
         ORDER BY sr.submitted_at DESC NULLS LAST, sr.created_at DESC
         LIMIT ${limitPlaceholder}
         OFFSET ${offsetPlaceholder}
@@ -1118,28 +1238,41 @@ export const surveyService = {
       values,
     );
 
-    return result.rows.map(mapSurveyResponse);
+    return result.rows.map(mapSurveyResponseSummary);
   },
 
   async getResponseAnswers(responseId: string) {
     const pool = getPool();
-    const result = await pool.query<SurveyAnswerRow>(
+    const result = await pool.query<SurveyAnswerDetailRow>(
       `
         SELECT
-          id,
-          response_id,
-          item_id,
-          rating,
-          created_at,
-          updated_at
-        FROM ${TABLES.surveyAnswers}
-        WHERE response_id = $1
-        ORDER BY created_at ASC
+          sa.id,
+          sa.response_id,
+          sa.item_id,
+          sa.rating,
+          sa.created_at,
+          sa.updated_at,
+          sf.id AS form_id,
+          sf.code AS form_code,
+          sf.title AS form_title,
+          ss.id AS section_id,
+          ss.code AS section_code,
+          ss.title AS section_title,
+          si.code AS item_code,
+          si.statement AS item_statement,
+          si.sort_order AS item_sort_order
+        FROM ${TABLES.surveyAnswers} sa
+        JOIN ${TABLES.surveyResponses} sr ON sr.id = sa.response_id
+        JOIN ${TABLES.surveyForms} sf ON sf.id = sr.form_id
+        JOIN ${TABLES.surveyItems} si ON si.id = sa.item_id
+        JOIN ${TABLES.surveySections} ss ON ss.id = si.section_id AND ss.form_id = sf.id
+        WHERE sa.response_id = $1
+        ORDER BY ss.sort_order ASC, si.sort_order ASC, sa.created_at ASC
       `,
       [responseId],
     );
 
-    return result.rows.map(mapSurveyAnswer);
+    return result.rows.map(mapSurveyResponseAnswer);
   },
 
   async closePool() {

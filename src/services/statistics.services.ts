@@ -1,6 +1,5 @@
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import mean from "@stdlib/stats-base-mean";
-import stdev from "@stdlib/stats-base-stdev";
 import min from "@stdlib/stats-base-min";
 import max from "@stdlib/stats-base-max";
 
@@ -43,6 +42,21 @@ type RatingRow = QueryResultRow & {
   rating: LikertValue;
 };
 
+export type DescriptiveCalculationStep = {
+  label: string;
+  formula: string;
+  substitution: string;
+  result: string;
+};
+
+export type DescriptiveCalculation = {
+  basis: string;
+  scale: string;
+  weightedTotal: number;
+  squaredDeviationsTotal: number;
+  steps: DescriptiveCalculationStep[];
+};
+
 export type DescriptiveStatistics = {
   count: number;
   mean: number;
@@ -55,6 +69,7 @@ export type DescriptiveStatistics = {
   distribution: RatingDistribution;
   interpretation: string;
   meanRange: string;
+  calculation: DescriptiveCalculation;
 };
 
 export type SurveyItemStatistics = DescriptiveStatistics & {
@@ -148,12 +163,86 @@ function calculateWeightedMean(distribution: RatingDistribution, count: number) 
   return weightedTotal / count;
 }
 
+function buildCalculationDetails(
+  values: number[],
+  distribution: RatingDistribution,
+  count: number,
+  total: number,
+  meanValue: number,
+  weightedMean: number,
+  varianceValue: number,
+  standardDeviation: number,
+  squaredDeviationsTotal: number,
+): DescriptiveCalculation {
+  const weightedTotal = LIKERT_SCALE.reduce(
+    (sum, scale) => sum + scale.value * distribution[scale.value],
+    0,
+  );
+  const frequencySubstitution = LIKERT_SCALE.map((scale) => `${scale.value}(${distribution[scale.value]})`).join(" + ");
+  const ratingPreview = values.length > 20 ? `${values.slice(0, 20).join(", ")} ...` : values.join(", ");
+  const varianceDenominator = count > 1 ? count - 1 : 0;
+
+  return {
+    basis: "SPSS-inspired descriptive statistics for Likert-scale survey responses.",
+    scale: "1=Strongly Disagree, 2=Disagree, 3=Neutral, 4=Agree, 5=Strongly Agree",
+    weightedTotal,
+    squaredDeviationsTotal: round(squaredDeviationsTotal),
+    steps: [
+      {
+        label: "Frequency distribution",
+        formula: "f = count of responses per Likert rating",
+        substitution: `Ratings: ${ratingPreview || "No ratings"}`,
+        result: `1=${distribution[1]}, 2=${distribution[2]}, 3=${distribution[3]}, 4=${distribution[4]}, 5=${distribution[5]}`,
+      },
+      {
+        label: "Total score",
+        formula: "Σx",
+        substitution: values.length > 0 ? values.join(" + ") : "0",
+        result: `${total}`,
+      },
+      {
+        label: "Mean",
+        formula: "Σx / N",
+        substitution: `${total} / ${count || 1}`,
+        result: `${round(meanValue)}`,
+      },
+      {
+        label: "Weighted total",
+        formula: "Σ(xf)",
+        substitution: frequencySubstitution,
+        result: `${weightedTotal}`,
+      },
+      {
+        label: "Weighted mean",
+        formula: "Σ(xf) / N",
+        substitution: `${weightedTotal} / ${count || 1}`,
+        result: `${round(weightedMean)}`,
+      },
+      {
+        label: "Sample variance",
+        formula: "Σ(x - x̄)² / (N - 1)",
+        substitution: `${round(squaredDeviationsTotal)} / ${varianceDenominator || 1}`,
+        result: `${round(varianceValue)}`,
+      },
+      {
+        label: "Standard deviation",
+        formula: "√variance",
+        substitution: `√${round(varianceValue)}`,
+        result: `${round(standardDeviation)}`,
+      },
+    ],
+  };
+}
+
 function calculateDescriptiveStatistics(values: number[]): DescriptiveStatistics {
   const count = values.length;
   const distribution = getDistribution(values);
+  const total = values.reduce((sum, value) => sum + value, 0);
   const meanValue = count > 0 ? mean(count, values, 1) : 0;
   const weightedMean = calculateWeightedMean(distribution, count);
-  const standardDeviation = count > 1 ? stdev(count, 1, values, 1) : 0;
+  const squaredDeviationsTotal = values.reduce((sum, value) => sum + (value - meanValue) ** 2, 0);
+  const varianceValue = count > 1 ? squaredDeviationsTotal / (count - 1) : 0;
+  const standardDeviation = Math.sqrt(varianceValue);
   const interpretation = getLikertInterpretation(weightedMean || meanValue);
 
   return {
@@ -161,13 +250,24 @@ function calculateDescriptiveStatistics(values: number[]): DescriptiveStatistics
     mean: round(meanValue),
     weightedMean: round(weightedMean),
     standardDeviation: round(standardDeviation),
-    variance: round(standardDeviation ** 2),
+    variance: round(varianceValue),
     minimum: count > 0 ? min(count, values, 1) : 0,
     maximum: count > 0 ? max(count, values, 1) : 0,
-    total: values.reduce((total, value) => total + value, 0),
+    total,
     distribution,
     interpretation: interpretation.label,
     meanRange: interpretation.meanRange,
+    calculation: buildCalculationDetails(
+      values,
+      distribution,
+      count,
+      total,
+      meanValue,
+      weightedMean,
+      varianceValue,
+      standardDeviation,
+      squaredDeviationsTotal,
+    ),
   };
 }
 
