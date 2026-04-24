@@ -48,8 +48,44 @@ export const LIKERT_SCALE = [
 export const QUESTIONNAIRE_TITLE =
   "Development of a Digital Repository System for AACCUP Accreditation Documents in Jose Rizal Memorial State University-Tampilisan Campus (JRMSU-TC)";
 
-export const VOLUNTARY_PARTICIPATION_NOTE =
+
+export const QUESTIONNAIRE_DOCUMENT_HEADER = {
+  documentCode: "JRMSU-CCS-TC-044",
+  country: "Republic of the Philippines",
+  university: "JOSE RIZAL MEMORIAL STATE UNIVERSITY",
+  tagline: "The Premier University in Zamboanga del Norte",
+  college: "COLLEGE OF COMPUTING STUDIES",
+  contactNumber: "0917-630-6056",
+  email: "ccs.tampilisan@jrmsu.edu.ph",
+  address: "ZNAC, Tampilisan, Zamboanga del Norte",
+} as const;
+
+export const QUESTIONNAIRE_INTRODUCTION = [
+  "Good day!",
+  "We, the researchers, are currently conducting a study entitled “Development of a Digital Repository System for AACCUP Accreditation Documents in Jose Rizal Memorial State University-Tampilisan Campus (JRMSU-TC)”",
+  "The purpose of these checklist questionnaires is to evaluate the existing processes employed by QA personnel and to assess the quality of the Digital Repository System using Garvin’s Eight Dimensions of Quality as the evaluation framework. The data gathered will be used to examine current practices, system functionality, and usability, and to identify opportunities for further improvement.",
+  "All information provided will be kept strictly confidential and will be used solely for academic and research purposes. Your sincere and honest responses are highly valued and will contribute greatly to the success of this study.",
+  "Thank you very much for your time and cooperation.",
+].join("\n\n");
+
+export const QUESTIONNAIRE_RESEARCHERS = [
+  "MILYN N. BUCA",
+  "JHONLY P. SALAC",
+  "WHOWARD JHON V. TOME",
+  "LEMUEL T. VELEZ",
+] as const;
+
+export const QUESTIONNAIRE_ADVISER = "ERSON A. RODRIGUEZ, LPT, MSIT";
+
+export const EXISTING_PROCESS_VOLUNTARY_NOTE =
   "Participation in this survey is completely voluntary. I have chosen to answer this questionnaire willingly, and no one has forced or coerced me to participate.";
+
+export const SYSTEM_EVALUATION_VOLUNTARY_NOTE =
+  "Participation in this survey is completely voluntary. I am willingly chosen to answer this questionnaire, and no one has been forced or coerced to obtain my participation.";
+
+export const RESPONDENT_SIGNATURE_LABEL = "Respondent's Signature";
+
+export const VOLUNTARY_PARTICIPATION_NOTE = EXISTING_PROCESS_VOLUNTARY_NOTE;
 
 export type TableName = (typeof TABLES)[keyof typeof TABLES];
 export type LikertValue = 1 | 2 | 3 | 4 | 5;
@@ -73,8 +109,15 @@ export type SurveyForm = {
   code: SurveyFormCode;
   title: string;
   description: string;
+  studyTitle?: string | null;
+  documentHeader?: typeof QUESTIONNAIRE_DOCUMENT_HEADER | Record<string, unknown> | null;
+  introduction?: string | null;
+  researchers?: string[] | null;
+  adviser?: string | null;
   instruction: string;
   scale: typeof LIKERT_SCALE;
+  voluntaryNote?: string | null;
+  signatureLabel?: string | null;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -138,7 +181,14 @@ export type QuestionnaireFormSeed = {
   code: SurveyFormCode;
   title: string;
   description: string;
+  studyTitle: string;
+  documentHeader: typeof QUESTIONNAIRE_DOCUMENT_HEADER;
+  introduction: string;
+  researchers: readonly string[];
+  adviser: string;
   instruction: string;
+  voluntaryNote: string;
+  signatureLabel: string;
   sections: QuestionnaireSectionSeed[];
 };
 
@@ -148,6 +198,13 @@ export const QUESTIONNAIRE_FORMS: QuestionnaireFormSeed[] = [
     title: "Existing Process Assessment Checklist",
     description:
       "Assessment of existing processes employed by QA Personnel during AACCUP accreditation at JRMSU-TC in terms of collection, organization, submission, and validation of accreditation evidence.",
+    studyTitle: QUESTIONNAIRE_TITLE,
+    documentHeader: QUESTIONNAIRE_DOCUMENT_HEADER,
+    introduction: QUESTIONNAIRE_INTRODUCTION,
+    researchers: QUESTIONNAIRE_RESEARCHERS,
+    adviser: QUESTIONNAIRE_ADVISER,
+    voluntaryNote: EXISTING_PROCESS_VOLUNTARY_NOTE,
+    signatureLabel: RESPONDENT_SIGNATURE_LABEL,
     instruction:
       "Please examine the existing processes employed by QA Personnel during AACCUP accreditation at JRMSU-TC in terms of the collection, organization, submission, and validation of accreditation evidence. Carefully read each statement and place a check mark (✓) under the number that best describes your assessment of the current practices. Please provide honest and objective responses based on actual institutional procedures and experiences.",
     sections: [
@@ -304,6 +361,13 @@ export const QUESTIONNAIRE_FORMS: QuestionnaireFormSeed[] = [
     title: "System Evaluation Checklist",
     description:
       "Evaluation of the developed Digital Repository System for AACCUP accreditation based on Dr. Garvin's Eight Dimensions of Quality Framework.",
+    studyTitle: QUESTIONNAIRE_TITLE,
+    documentHeader: QUESTIONNAIRE_DOCUMENT_HEADER,
+    introduction: QUESTIONNAIRE_INTRODUCTION,
+    researchers: QUESTIONNAIRE_RESEARCHERS,
+    adviser: QUESTIONNAIRE_ADVISER,
+    voluntaryNote: SYSTEM_EVALUATION_VOLUNTARY_NOTE,
+    signatureLabel: RESPONDENT_SIGNATURE_LABEL,
     instruction:
       "Please evaluate the developed Digital Repository System for AACCUP accreditation based on Dr. Garvin's Eight Dimensions of Quality Framework, namely: performance, features, reliability, conformance, durability, serviceability, aesthetics, and perceived quality. Carefully read and assess each indicator, then place a check mark (✓) under the appropriate number that best reflects your evaluation of the system. Your responses should be based on your personal experience, observation, and actual use of the system.",
     sections: [

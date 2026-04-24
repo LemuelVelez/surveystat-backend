@@ -20,19 +20,53 @@ async function seedQuestionnaires() {
     for (const form of QUESTIONNAIRE_FORMS) {
       const formResult = await client.query<{ id: string }>(
         `
-          INSERT INTO survey_forms (code, title, description, instruction, scale, is_active)
-          VALUES ($1, $2, $3, $4, $5::jsonb, TRUE)
+          INSERT INTO survey_forms (
+            code,
+            title,
+            description,
+            study_title,
+            document_header,
+            introduction,
+            researchers,
+            adviser,
+            instruction,
+            scale,
+            voluntary_note,
+            signature_label,
+            is_active
+          )
+          VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, $8, $9, $10::jsonb, $11, $12, TRUE)
           ON CONFLICT (code)
           DO UPDATE SET
             title = EXCLUDED.title,
             description = EXCLUDED.description,
+            study_title = EXCLUDED.study_title,
+            document_header = EXCLUDED.document_header,
+            introduction = EXCLUDED.introduction,
+            researchers = EXCLUDED.researchers,
+            adviser = EXCLUDED.adviser,
             instruction = EXCLUDED.instruction,
             scale = EXCLUDED.scale,
+            voluntary_note = EXCLUDED.voluntary_note,
+            signature_label = EXCLUDED.signature_label,
             is_active = TRUE,
             updated_at = NOW()
           RETURNING id
         `,
-        [form.code, form.title, form.description, form.instruction, JSON.stringify(LIKERT_SCALE)],
+        [
+          form.code,
+          form.title,
+          form.description,
+          form.studyTitle,
+          JSON.stringify(form.documentHeader),
+          form.introduction,
+          JSON.stringify(form.researchers),
+          form.adviser,
+          form.instruction,
+          JSON.stringify(LIKERT_SCALE),
+          form.voluntaryNote,
+          form.signatureLabel,
+        ],
       );
 
       const formId = formResult.rows[0]?.id;
