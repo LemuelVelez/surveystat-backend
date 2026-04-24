@@ -1,7 +1,126 @@
-import { Pool } from "pg";
+import { createHash } from "node:crypto";
+import { Pool, type PoolClient } from "pg";
 
 import { assertDatabaseConfig, getDatabaseConfig } from "../../lib/db.js";
 import { LIKERT_SCALE, QUESTIONNAIRE_FORMS } from "../model/model.js";
+
+const QUESTIONNAIRE_SEED_ID = "questionnaire_forms";
+const QUESTIONNAIRE_SEED_VERSION = "2026-04-24-questionnaire-forms-v1";
+
+function buildSeedFingerprint() {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        version: QUESTIONNAIRE_SEED_VERSION,
+        forms: QUESTIONNAIRE_FORMS,
+        scale: LIKERT_SCALE,
+      }),
+    )
+    .digest("hex");
+}
+
+async function ensureSeederTable(client: PoolClient) {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS data_seeders (
+      id TEXT PRIMARY KEY,
+      version TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      seeded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+async function getExistingSeedFingerprint(client: PoolClient) {
+  const result = await client.query<{ fingerprint: string; version: string }>(
+    "SELECT fingerprint, version FROM data_seeders WHERE id = $1",
+    [QUESTIONNAIRE_SEED_ID],
+  );
+
+  return result.rows[0] ?? null;
+}
+
+async function countExpectedSeededRows(client: PoolClient) {
+  const formCodes = QUESTIONNAIRE_FORMS.map((form) => form.code);
+  const sectionCodes = QUESTIONNAIRE_FORMS.flatMap((form) =>
+    form.sections.map((section) => section.code),
+  );
+  const itemCodes = QUESTIONNAIRE_FORMS.flatMap((form) =>
+    form.sections.flatMap((section) => section.items.map((item) => item.code)),
+  );
+
+  const [formsResult, sectionsResult, itemsResult] = await Promise.all([
+    client.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM survey_forms WHERE code = ANY($1::survey_form_code[])",
+      [formCodes],
+    ),
+    client.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM survey_sections WHERE code = ANY($1::text[])",
+      [sectionCodes],
+    ),
+    client.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM survey_items WHERE code = ANY($1::text[])",
+      [itemCodes],
+    ),
+  ]);
+
+  return {
+    forms: Number(formsResult.rows[0]?.count ?? 0),
+    sections: Number(sectionsResult.rows[0]?.count ?? 0),
+    items: Number(itemsResult.rows[0]?.count ?? 0),
+    expectedForms: formCodes.length,
+    expectedSections: sectionCodes.length,
+    expectedItems: itemCodes.length,
+  };
+}
+
+async function isQuestionnaireSeedAlreadyCurrent(client: PoolClient, fingerprint: string) {
+  const existingSeed = await getExistingSeedFingerprint(client);
+
+  if (existingSeed?.fingerprint === fingerprint) {
+    return true;
+  }
+
+  const seededRows = await countExpectedSeededRows(client);
+  const hasAllExpectedRows =
+    seededRows.forms === seededRows.expectedForms &&
+    seededRows.sections === seededRows.expectedSections &&
+    seededRows.items === seededRows.expectedItems;
+
+  if (hasAllExpectedRows && !existingSeed) {
+    await client.query(
+      `
+        INSERT INTO data_seeders (id, version, fingerprint)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (id)
+        DO UPDATE SET
+          version = EXCLUDED.version,
+          fingerprint = EXCLUDED.fingerprint,
+          updated_at = NOW()
+      `,
+      [QUESTIONNAIRE_SEED_ID, QUESTIONNAIRE_SEED_VERSION, fingerprint],
+    );
+
+    return true;
+  }
+
+  return false;
+}
+
+async function markQuestionnaireSeedAsCurrent(client: PoolClient, fingerprint: string) {
+  await client.query(
+    `
+      INSERT INTO data_seeders (id, version, fingerprint)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (id)
+      DO UPDATE SET
+        version = EXCLUDED.version,
+        fingerprint = EXCLUDED.fingerprint,
+        updated_at = NOW()
+    `,
+    [QUESTIONNAIRE_SEED_ID, QUESTIONNAIRE_SEED_VERSION, fingerprint],
+  );
+}
 
 async function seedQuestionnaires() {
   assertDatabaseConfig();
@@ -13,9 +132,17 @@ async function seedQuestionnaires() {
   });
 
   const client = await pool.connect();
+  const seedFingerprint = buildSeedFingerprint();
 
   try {
     await client.query("BEGIN");
+    await ensureSeederTable(client);
+
+    if (await isQuestionnaireSeedAlreadyCurrent(client, seedFingerprint)) {
+      await client.query("COMMIT");
+      console.log("Questionnaire seed already current. Skipped.");
+      return;
+    }
 
     for (const form of QUESTIONNAIRE_FORMS) {
       const formResult = await client.query<{ id: string }>(
@@ -141,6 +268,7 @@ async function seedQuestionnaires() {
       }
     }
 
+    await markQuestionnaireSeedAsCurrent(client, seedFingerprint);
     await client.query("COMMIT");
     console.log("Questionnaire forms, sections, and items seeded successfully.");
   } catch (error) {
