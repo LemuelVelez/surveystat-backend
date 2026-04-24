@@ -2,6 +2,7 @@ import { Router } from "express";
 
 import {
   createRespondent,
+  createSurveyForm,
   getQuestionnaireByFormCode,
   getQuestionnaireByFormId,
   getRespondentById,
@@ -16,6 +17,7 @@ import {
 const router = Router();
 
 router.get("/forms", listSurveyForms);
+router.post("/forms", createSurveyForm);
 router.get("/forms/code/:formCode", getSurveyFormByCode);
 router.get("/forms/:formId", getSurveyFormById);
 

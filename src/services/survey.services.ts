@@ -4,6 +4,7 @@ import { assertDatabaseConfig, getDatabaseConfig } from "../lib/db.js";
 import {
   LIKERT_SCALE,
   TABLES,
+  type LikertScale,
   type LikertValue,
   type Respondent,
   type RespondentRole,
@@ -28,9 +29,10 @@ type SurveyFormRow = QueryResultRow & {
   researchers: string[] | null;
   adviser: string | null;
   instruction: string;
-  scale: typeof LIKERT_SCALE;
+  scale: LikertScale;
   voluntary_note: string | null;
   signature_label: string | null;
+  respondent_information_required: boolean;
   is_active: boolean;
   created_at: Date;
   updated_at: Date;
@@ -108,6 +110,38 @@ export type CreateRespondentInput = {
   consentGiven?: boolean;
 };
 
+export type CreateSurveyItemInput = {
+  code?: string | null;
+  statement: string;
+  sortOrder?: number;
+  isRequired?: boolean;
+};
+
+export type CreateSurveySectionInput = {
+  code?: string | null;
+  title: string;
+  sortOrder?: number;
+  items: CreateSurveyItemInput[];
+};
+
+export type CreateSurveyFormInput = {
+  code: SurveyFormCode;
+  title: string;
+  description?: string | null;
+  studyTitle?: string | null;
+  documentHeader?: SurveyForm["documentHeader"] | null;
+  introduction?: string | null;
+  researchers?: string[] | null;
+  adviser?: string | null;
+  instruction?: string | null;
+  scale?: LikertScale;
+  voluntaryNote?: string | null;
+  signatureLabel?: string | null;
+  respondentInformationRequired?: boolean;
+  isActive?: boolean;
+  sections?: CreateSurveySectionInput[];
+};
+
 export type SubmitSurveyAnswerInput = {
   itemId: string;
   rating: LikertValue;
@@ -174,6 +208,44 @@ function normalizeOffset(value?: number) {
   return Math.max(Math.trunc(Number(value)), 0);
 }
 
+function normalizeSortOrder(value: number | undefined, fallback: number) {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.max(Math.trunc(Number(value)), 1);
+}
+
+function requireText(value: string | null | undefined, fieldName: string) {
+  const text = sanitizeText(value);
+
+  if (!text) {
+    throw new Error(`${fieldName} is required.`);
+  }
+
+  return text;
+}
+
+function createCodeFromTitle(title: string, fallback: string) {
+  const code = title
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return code || fallback;
+}
+
+function validateRespondentInformation(input?: CreateRespondentInput | null) {
+  if (!input) {
+    throw new Error("Respondent information is required for this survey.");
+  }
+
+  requireText(input.fullName, "Respondent full name");
+  requireText(input.email, "Respondent email");
+  requireText(String(input.role ?? ""), "Respondent role");
+}
+
 function isLikertValue(value: number): value is LikertValue {
   return LIKERT_SCALE.some((scale) => scale.value === value);
 }
@@ -201,6 +273,7 @@ function mapSurveyForm(row: SurveyFormRow): SurveyForm {
     scale: row.scale ?? LIKERT_SCALE,
     voluntaryNote: row.voluntary_note,
     signatureLabel: row.signature_label,
+    respondentInformationRequired: row.respondent_information_required ?? true,
     isActive: row.is_active,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -304,6 +377,7 @@ async function getSurveyFormById(executor: DatabaseExecutor, formId: string) {
         scale,
         voluntary_note,
         signature_label,
+        respondent_information_required,
         is_active,
         created_at,
         updated_at
@@ -335,6 +409,7 @@ async function getSurveyFormByCode(executor: DatabaseExecutor, formCode: SurveyF
         scale,
         voluntary_note,
         signature_label,
+        respondent_information_required,
         is_active,
         created_at,
         updated_at
@@ -371,6 +446,139 @@ async function resolveSurveyForm(executor: DatabaseExecutor, input: Pick<SubmitS
   }
 
   throw new Error("Survey form id or code is required.");
+}
+
+async function createSurveyForm(input: CreateSurveyFormInput) {
+  return withTransaction(async (client) => {
+    const title = requireText(input.title, "Survey title");
+    const code = requireText(String(input.code ?? ""), "Survey code") as SurveyFormCode;
+    const sections = input.sections ?? [];
+
+    const formResult = await client.query<SurveyFormRow>(
+      `
+        INSERT INTO ${TABLES.surveyForms} (
+          code,
+          title,
+          description,
+          study_title,
+          document_header,
+          introduction,
+          researchers,
+          adviser,
+          instruction,
+          scale,
+          voluntary_note,
+          signature_label,
+          respondent_information_required,
+          is_active
+        )
+        VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, $8, $9, $10::jsonb, $11, $12, $13, $14)
+        RETURNING
+          id,
+          code,
+          title,
+          description,
+          study_title,
+          document_header,
+          introduction,
+          researchers,
+          adviser,
+          instruction,
+          scale,
+          voluntary_note,
+          signature_label,
+          respondent_information_required,
+          is_active,
+          created_at,
+          updated_at
+      `,
+      [
+        code,
+        title,
+        sanitizeText(input.description) ?? "",
+        sanitizeText(input.studyTitle),
+        JSON.stringify(input.documentHeader ?? {}),
+        sanitizeText(input.introduction),
+        JSON.stringify(input.researchers ?? []),
+        sanitizeText(input.adviser),
+        sanitizeText(input.instruction) ?? "Please read each statement carefully and select the rating that best reflects your answer.",
+        JSON.stringify(input.scale ?? LIKERT_SCALE),
+        sanitizeText(input.voluntaryNote),
+        sanitizeText(input.signatureLabel) ?? "Respondent's Signature",
+        input.respondentInformationRequired ?? true,
+        input.isActive ?? true,
+      ],
+    );
+
+    const formRow = formResult.rows[0];
+
+    if (!formRow) {
+      throw new Error("Unable to create survey form.");
+    }
+
+    const form = mapSurveyForm(formRow);
+
+    for (const [sectionIndex, section] of sections.entries()) {
+      const sectionTitle = requireText(section.title, `Section ${sectionIndex + 1} title`);
+      const sectionResult = await client.query<SurveySectionRow>(
+        `
+          INSERT INTO ${TABLES.surveySections} (form_id, code, title, sort_order)
+          VALUES ($1, $2, $3, $4)
+          RETURNING
+            id,
+            form_id,
+            code,
+            title,
+            sort_order,
+            created_at,
+            updated_at
+        `,
+        [
+          form.id,
+          sanitizeText(section.code) ?? createCodeFromTitle(sectionTitle, `section_${sectionIndex + 1}`),
+          sectionTitle,
+          normalizeSortOrder(section.sortOrder, sectionIndex + 1),
+        ],
+      );
+
+      const sectionRow = sectionResult.rows[0];
+
+      if (!sectionRow) {
+        throw new Error(`Unable to create survey section: ${sectionTitle}`);
+      }
+
+      for (const [itemIndex, item] of section.items.entries()) {
+        const statement = requireText(item.statement, `Section ${sectionIndex + 1} item ${itemIndex + 1} statement`);
+        await client.query<SurveyItemRow>(
+          `
+            INSERT INTO ${TABLES.surveyItems} (section_id, code, statement, sort_order, is_required)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING
+              id,
+              section_id,
+              code,
+              statement,
+              sort_order,
+              is_required,
+              created_at,
+              updated_at
+          `,
+          [
+            sectionRow.id,
+            sanitizeText(item.code) ?? createCodeFromTitle(statement, `item_${itemIndex + 1}`),
+            statement,
+            normalizeSortOrder(item.sortOrder, itemIndex + 1),
+            item.isRequired ?? true,
+          ],
+        );
+      }
+    }
+
+    return {
+      ...form,
+      sections: await getQuestionnaireSections(client, form.id),
+    };
+  });
 }
 
 async function createRespondent(executor: DatabaseExecutor, input: CreateRespondentInput) {
@@ -536,6 +744,10 @@ async function validateSurveyAnswers(executor: DatabaseExecutor, formId: string,
 export const surveyService = {
   getPool,
 
+  async createSurveyForm(input: CreateSurveyFormInput) {
+    return createSurveyForm(input);
+  },
+
   async listSurveyForms(options: { activeOnly?: boolean } = {}) {
     const pool = getPool();
     const activeOnly = options.activeOnly ?? true;
@@ -556,6 +768,7 @@ export const surveyService = {
           scale,
           voluntary_note,
           signature_label,
+          respondent_information_required,
           is_active,
           created_at,
           updated_at
@@ -623,6 +836,10 @@ export const surveyService = {
 
       if (!input.voluntaryConsent) {
         throw new Error("Voluntary consent is required before submitting the survey response.");
+      }
+
+      if (form.respondentInformationRequired && !input.respondentId) {
+        validateRespondentInformation(input.respondent);
       }
 
       await validateSurveyAnswers(client, form.id, input.answers);

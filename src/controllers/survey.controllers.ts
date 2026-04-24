@@ -1,7 +1,14 @@
 import type { Request, Response } from "express";
 
-import { surveyService, type CreateRespondentInput, type SubmitSurveyResponseInput } from "../services/survey.services.js";
-import type { LikertValue, RespondentRole, SurveyFormCode } from "../database/model/model.js";
+import {
+  surveyService,
+  type CreateRespondentInput,
+  type CreateSurveyFormInput,
+  type CreateSurveyItemInput,
+  type CreateSurveySectionInput,
+  type SubmitSurveyResponseInput,
+} from "../services/survey.services.js";
+import type { LikertScaleOption, LikertValue, RespondentRole, SurveyFormCode } from "../database/model/model.js";
 
 function toBoolean(value: unknown, fallback: boolean) {
   if (value === undefined || value === null || value === "") {
@@ -61,6 +68,115 @@ function getFormCode(value: unknown) {
   return String(value) as SurveyFormCode;
 }
 
+function toStringArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+function getLikertScale(value: unknown): CreateSurveyFormInput["scale"] {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const scale: LikertScaleOption[] = [];
+
+  for (const option of value) {
+    const optionBody = option as Record<string, unknown>;
+    const rating = Number(optionBody.value);
+
+    if (![1, 2, 3, 4, 5].includes(rating)) {
+      continue;
+    }
+
+    const label = toOptionalString(optionBody.label) ?? `Rating ${rating}`;
+    const scaleOption: LikertScaleOption = {
+      value: rating as LikertValue,
+      label,
+    };
+    const description = toNullableString(optionBody.description);
+    const meanRange = toOptionalString(optionBody.meanRange);
+    const minMean = toNumber(optionBody.minMean);
+    const maxMean = toNumber(optionBody.maxMean);
+
+    if (description !== null) {
+      scaleOption.description = description;
+    }
+
+    if (meanRange) {
+      scaleOption.meanRange = meanRange;
+    }
+
+    if (minMean !== undefined) {
+      scaleOption.minMean = minMean;
+    }
+
+    if (maxMean !== undefined) {
+      scaleOption.maxMean = maxMean;
+    }
+
+    scale.push(scaleOption);
+  }
+
+  return scale.length > 0 ? scale : undefined;
+}
+
+function getSurveyItems(value: unknown): CreateSurveyItemInput[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((item, index) => {
+    const itemBody = item as Record<string, unknown>;
+
+    return {
+      code: toNullableString(itemBody.code),
+      statement: String(itemBody.statement ?? ""),
+      sortOrder: toNumber(itemBody.sortOrder) ?? index + 1,
+      isRequired: toBoolean(itemBody.isRequired, true),
+    };
+  });
+}
+
+function getSurveySections(value: unknown): CreateSurveySectionInput[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((section, index) => {
+    const sectionBody = section as Record<string, unknown>;
+
+    return {
+      code: toNullableString(sectionBody.code),
+      title: String(sectionBody.title ?? ""),
+      sortOrder: toNumber(sectionBody.sortOrder) ?? index + 1,
+      items: getSurveyItems(sectionBody.items),
+    };
+  });
+}
+
+function getCreateSurveyFormInput(body: Record<string, unknown>): CreateSurveyFormInput {
+  return {
+    code: getFormCode(toOptionalString(body.code) ?? ""),
+    title: String(body.title ?? ""),
+    description: toNullableString(body.description),
+    studyTitle: toNullableString(body.studyTitle),
+    documentHeader: body.documentHeader && typeof body.documentHeader === "object" ? (body.documentHeader as Record<string, unknown>) : {},
+    introduction: toNullableString(body.introduction),
+    researchers: toStringArray(body.researchers),
+    adviser: toNullableString(body.adviser),
+    instruction: toNullableString(body.instruction),
+    scale: getLikertScale(body.scale),
+    voluntaryNote: toNullableString(body.voluntaryNote),
+    signatureLabel: toNullableString(body.signatureLabel),
+    respondentInformationRequired: toBoolean(body.respondentInformationRequired, true),
+    isActive: toBoolean(body.isActive, true),
+    sections: getSurveySections(body.sections),
+  };
+}
+
 function getRespondentInput(body: Record<string, unknown>): CreateRespondentInput {
   return {
     fullName: toNullableString(body.fullName),
@@ -91,6 +207,19 @@ function getSubmitSurveyResponseInput(body: Record<string, unknown>): SubmitSurv
       };
     }),
   };
+}
+
+export async function createSurveyForm(req: Request, res: Response) {
+  try {
+    const form = await surveyService.createSurveyForm(getCreateSurveyFormInput(req.body ?? {}));
+
+    res.status(201).json({
+      message: "Survey form created successfully.",
+      data: form,
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
 }
 
 export async function listSurveyForms(req: Request, res: Response) {

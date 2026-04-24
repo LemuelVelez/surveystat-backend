@@ -89,7 +89,16 @@ export const VOLUNTARY_PARTICIPATION_NOTE = EXISTING_PROCESS_VOLUNTARY_NOTE;
 
 export type TableName = (typeof TABLES)[keyof typeof TABLES];
 export type LikertValue = 1 | 2 | 3 | 4 | 5;
-export type SurveyFormCode = "existing_process_assessment" | "system_evaluation";
+export type SurveyFormCode = "existing_process_assessment" | "system_evaluation" | "respondent_system_experience";
+export type LikertScaleOption = {
+  value: LikertValue;
+  label: string;
+  description?: string | null;
+  meanRange?: string;
+  minMean?: number;
+  maxMean?: number;
+};
+export type LikertScale = readonly LikertScaleOption[];
 export type RespondentRole = "qa_personnel" | "system_user" | "validator" | "accreditor" | "researcher" | "other";
 
 export type Respondent = {
@@ -115,9 +124,10 @@ export type SurveyForm = {
   researchers?: string[] | null;
   adviser?: string | null;
   instruction: string;
-  scale: typeof LIKERT_SCALE;
+  scale: LikertScale;
   voluntaryNote?: string | null;
   signatureLabel?: string | null;
+  respondentInformationRequired: boolean;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -168,6 +178,7 @@ export type QuestionnaireItemSeed = {
   code: string;
   statement: string;
   sortOrder: number;
+  isRequired?: boolean;
 };
 
 export type QuestionnaireSectionSeed = {
@@ -189,6 +200,7 @@ export type QuestionnaireFormSeed = {
   instruction: string;
   voluntaryNote: string;
   signatureLabel: string;
+  respondentInformationRequired: boolean;
   sections: QuestionnaireSectionSeed[];
 };
 
@@ -205,6 +217,7 @@ export const QUESTIONNAIRE_FORMS: QuestionnaireFormSeed[] = [
     adviser: QUESTIONNAIRE_ADVISER,
     voluntaryNote: EXISTING_PROCESS_VOLUNTARY_NOTE,
     signatureLabel: RESPONDENT_SIGNATURE_LABEL,
+    respondentInformationRequired: true,
     instruction:
       "Please examine the existing processes employed by QA Personnel during AACCUP accreditation at JRMSU-TC in terms of the collection, organization, submission, and validation of accreditation evidence. Carefully read each statement and place a check mark (✓) under the number that best describes your assessment of the current practices. Please provide honest and objective responses based on actual institutional procedures and experiences.",
     sections: [
@@ -368,6 +381,7 @@ export const QUESTIONNAIRE_FORMS: QuestionnaireFormSeed[] = [
     adviser: QUESTIONNAIRE_ADVISER,
     voluntaryNote: SYSTEM_EVALUATION_VOLUNTARY_NOTE,
     signatureLabel: RESPONDENT_SIGNATURE_LABEL,
+    respondentInformationRequired: true,
     instruction:
       "Please evaluate the developed Digital Repository System for AACCUP accreditation based on Dr. Garvin's Eight Dimensions of Quality Framework, namely: performance, features, reliability, conformance, durability, serviceability, aesthetics, and perceived quality. Carefully read and assess each indicator, then place a check mark (✓) under the appropriate number that best reflects your evaluation of the system. Your responses should be based on your personal experience, observation, and actual use of the system.",
     sections: [
@@ -640,6 +654,96 @@ export const QUESTIONNAIRE_FORMS: QuestionnaireFormSeed[] = [
             code: "system_perceived_quality_05",
             statement: "I am confident relying on this system during actual survey visits.",
             sortOrder: 5,
+          },
+        ],
+      },
+    ],
+  },
+
+  {
+    code: "respondent_system_experience",
+    title: "System Respondent Experience Checklist",
+    description:
+      "Evaluation of the respondent experience while answering surveys and using the Digital Repository System survey workflow.",
+    studyTitle: QUESTIONNAIRE_TITLE,
+    documentHeader: QUESTIONNAIRE_DOCUMENT_HEADER,
+    introduction: QUESTIONNAIRE_INTRODUCTION,
+    researchers: QUESTIONNAIRE_RESEARCHERS,
+    adviser: QUESTIONNAIRE_ADVISER,
+    voluntaryNote: EXISTING_PROCESS_VOLUNTARY_NOTE,
+    signatureLabel: RESPONDENT_SIGNATURE_LABEL,
+    respondentInformationRequired: false,
+    instruction:
+      "Please evaluate your experience as a respondent of the Digital Repository System survey workflow. Carefully read each statement and place a check mark (✓) under the appropriate number that best reflects your experience.",
+    sections: [
+      {
+        code: "respondent_accessibility",
+        title: "Accessibility and Ease of Use",
+        sortOrder: 1,
+        items: [
+          {
+            code: "respondent_accessibility_01",
+            statement: "I can access the survey page without difficulty using the provided link.",
+            sortOrder: 1,
+          },
+          {
+            code: "respondent_accessibility_02",
+            statement: "I can understand the survey instructions before answering the checklist.",
+            sortOrder: 2,
+          },
+          {
+            code: "respondent_accessibility_03",
+            statement: "I can move through the respondent information and checklist steps easily.",
+            sortOrder: 3,
+          },
+          {
+            code: "respondent_accessibility_04",
+            statement: "I find the survey page readable on the device I use.",
+            sortOrder: 4,
+          },
+        ],
+      },
+      {
+        code: "respondent_submission_experience",
+        title: "Submission Experience",
+        sortOrder: 2,
+        items: [
+          {
+            code: "respondent_submission_01",
+            statement: "I can clearly identify which checklist items still need to be answered before submission.",
+            sortOrder: 1,
+          },
+          {
+            code: "respondent_submission_02",
+            statement: "I can submit my response without confusion or unnecessary steps.",
+            sortOrder: 2,
+          },
+          {
+            code: "respondent_submission_03",
+            statement: "I receive clear feedback when my survey response is submitted successfully.",
+            sortOrder: 3,
+          },
+        ],
+      },
+      {
+        code: "respondent_privacy_confidence",
+        title: "Privacy and Confidence",
+        sortOrder: 3,
+        items: [
+          {
+            code: "respondent_privacy_01",
+            statement: "I understand that my participation in the survey is voluntary.",
+            sortOrder: 1,
+          },
+          {
+            code: "respondent_privacy_02",
+            statement: "I feel confident that my response will be used only for academic and research purposes.",
+            sortOrder: 2,
+          },
+          {
+            code: "respondent_privacy_03",
+            statement: "I am comfortable answering the survey using this online system.",
+            sortOrder: 3,
           },
         ],
       },
