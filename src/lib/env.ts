@@ -52,6 +52,7 @@ export const env = {
     accessKeyId: readEnv("AWS_ACCESS_KEY_ID"),
     secretAccessKey: readEnv("AWS_SECRET_ACCESS_KEY"),
     prefix: readEnv("S3_PREFIX", "uploads"),
+    publicBaseUrl: readEnv("S3_PUBLIC_BASE_URL"),
   },
 };
 

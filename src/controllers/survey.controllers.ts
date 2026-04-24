@@ -222,6 +222,8 @@ function getSubmitSurveyResponseInput(body: Record<string, unknown>): SubmitSurv
     respondentId: toNullableString(body.respondentId),
     respondent: body.respondent && typeof body.respondent === "object" ? getRespondentInput(body.respondent as Record<string, unknown>) : null,
     respondentSignature: toNullableString(body.respondentSignature),
+    respondentSignatureImage: toNullableString(body.respondentSignatureImage),
+    respondentSignatureFileName: toNullableString(body.respondentSignatureFileName),
     voluntaryConsent: toBoolean(body.voluntaryConsent, false),
     answers: answers.map((answer) => {
       const answerBody = answer as Record<string, unknown>;
@@ -451,6 +453,41 @@ export async function getResponseAnswers(req: Request, res: Response) {
 
     res.status(200).json({
       data: answers,
+    });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+}
+
+export async function resendSurveyResponseReviewEmail(req: Request, res: Response) {
+  try {
+    const responseId = getRouteParam(req.params.responseId, "responseId");
+    const result = await surveyService.resendSurveyResponseReviewEmail(responseId);
+
+    res.status(200).json({
+      message: "Survey response review email resent successfully.",
+      data: result,
+    });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+}
+
+export async function deleteSurveyResponse(req: Request, res: Response) {
+  try {
+    const responseId = getRouteParam(req.params.responseId, "responseId");
+    const response = await surveyService.deleteSurveyResponse(responseId);
+
+    if (!response) {
+      res.status(404).json({
+        message: "Survey response not found.",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      message: "Survey response deleted successfully.",
+      data: response,
     });
   } catch (error) {
     sendError(res, error, 500);

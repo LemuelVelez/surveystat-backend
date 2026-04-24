@@ -3,6 +3,7 @@ import { Router } from "express";
 import {
   createRespondent,
   createSurveyForm,
+  deleteSurveyResponse,
   createSurveySeries,
   getQuestionnaireByFormCode,
   getQuestionnaireByFormId,
@@ -12,6 +13,7 @@ import {
   getSurveyFormById,
   listSurveyForms,
   listSurveyResponses,
+  resendSurveyResponseReviewEmail,
   submitSurveyResponse,
   updateSurveyFormRespondentInformation,
 } from "../controllers/survey.controllers.js";
@@ -34,5 +36,7 @@ router.get("/respondents/:respondentId", getRespondentById);
 router.post("/responses", submitSurveyResponse);
 router.get("/responses", listSurveyResponses);
 router.get("/responses/:responseId/answers", getResponseAnswers);
+router.post("/responses/:responseId/resend-review", resendSurveyResponseReviewEmail);
+router.delete("/responses/:responseId", deleteSurveyResponse);
 
 export default router;

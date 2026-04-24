@@ -1,6 +1,8 @@
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 
 import { assertDatabaseConfig, getDatabaseConfig } from "../lib/db.js";
+import { uploadBase64Object } from "../lib/bucket.js";
+import { sendSurveyResponseReviewEmail } from "../lib/email/response-email.js";
 import {
   getLikertInterpretation,
   LIKERT_SCALE,
@@ -194,6 +196,8 @@ export type SubmitSurveyResponseInput = {
   respondentId?: string | null;
   respondent?: CreateRespondentInput | null;
   respondentSignature?: string | null;
+  respondentSignatureImage?: string | null;
+  respondentSignatureFileName?: string | null;
   voluntaryConsent: boolean;
   answers: SubmitSurveyAnswerInput[];
 };
@@ -232,6 +236,7 @@ export type SurveyResponseAnswer = SurveyAnswer & {
 };
 
 export type ListSurveyResponsesOptions = {
+  responseId?: string;
   formId?: string;
   formCode?: SurveyFormCode;
   respondentId?: string;
@@ -352,6 +357,119 @@ function normalizeLikertValue(value: number) {
   }
 
   return value;
+}
+
+function isBase64DataUrl(value?: string | null) {
+  return Boolean(value?.trim().match(/^data:[^;,]+;base64,/));
+}
+
+async function resolveRespondentSignature(input: SubmitSurveyResponseInput, form: SurveyForm) {
+  const signatureImage = sanitizeText(input.respondentSignatureImage);
+
+  if (!signatureImage) {
+    return sanitizeText(input.respondentSignature);
+  }
+
+  if (!isBase64DataUrl(signatureImage)) {
+    throw new Error("Invalid respondent signature image. Please upload or draw a valid image signature.");
+  }
+
+  const uploadedSignature = await uploadBase64Object({
+    dataUrl: signatureImage,
+    filename: input.respondentSignatureFileName ?? "respondent-signature.png",
+    folder: `survey-signatures/${form.code}`,
+  });
+
+  return uploadedSignature.url;
+}
+
+function createEmailSummary(params: {
+  response: SurveyResponse;
+  form: SurveyForm;
+  respondent: Respondent | null;
+  answers: SurveyResponseAnswer[];
+}): SurveyResponseSummary {
+  const answerCount = params.answers.length;
+  const total = params.answers.reduce((sum, answer) => sum + Number(answer.rating ?? 0), 0);
+  const weightedMean = answerCount > 0 ? Number((total / answerCount).toFixed(2)) : 0;
+  const interpretation = getLikertInterpretation(weightedMean);
+
+  return {
+    ...params.response,
+    formCode: params.form.code,
+    formTitle: params.form.title,
+    respondentFullName: params.respondent?.fullName ?? null,
+    respondentEmail: params.respondent?.email ?? null,
+    respondentRole: params.respondent?.role ?? null,
+    respondentOffice: params.respondent?.office ?? null,
+    respondentProgram: params.respondent?.program ?? null,
+    answerCount,
+    weightedMean,
+    interpretation: weightedMean > 0 ? interpretation.label : "No data",
+    meanRange: weightedMean > 0 ? interpretation.meanRange : "N/A",
+  };
+}
+
+async function getResponseAnswerDetails(responseId: string) {
+  const pool = getPool();
+  const result = await pool.query<SurveyAnswerDetailRow>(
+    `
+      SELECT
+        sa.id,
+        sa.response_id,
+        sa.item_id,
+        sa.rating,
+        sa.created_at,
+        sa.updated_at,
+        sf.id AS form_id,
+        sf.code AS form_code,
+        sf.title AS form_title,
+        ss.id AS section_id,
+        ss.code AS section_code,
+        ss.title AS section_title,
+        si.code AS item_code,
+        si.statement AS item_statement,
+        si.sort_order AS item_sort_order
+      FROM ${TABLES.surveyAnswers} sa
+      JOIN ${TABLES.surveyResponses} sr ON sr.id = sa.response_id
+      JOIN ${TABLES.surveyForms} sf ON sf.id = sr.form_id
+      JOIN ${TABLES.surveyItems} si ON si.id = sa.item_id
+      JOIN ${TABLES.surveySections} ss ON ss.id = si.section_id AND ss.form_id = sf.id
+      WHERE sa.response_id = $1
+      ORDER BY ss.sort_order ASC, si.sort_order ASC, sa.created_at ASC
+    `,
+    [responseId],
+  );
+
+  return result.rows.map(mapSurveyResponseAnswer);
+}
+
+async function sendResponseReviewEmail(params: {
+  response: SurveyResponse;
+  form: SurveyForm;
+  respondent: Respondent | null;
+}) {
+  const recipientEmail = sanitizeText(params.respondent?.email);
+
+  if (!recipientEmail) {
+    return false;
+  }
+
+  const answers = await getResponseAnswerDetails(params.response.id);
+  const responseSummary = createEmailSummary({
+    response: params.response,
+    form: params.form,
+    respondent: params.respondent,
+    answers,
+  });
+
+  await sendSurveyResponseReviewEmail({
+    to: recipientEmail,
+    response: responseSummary,
+    answers,
+  });
+
+  return true;
 }
 
 function mapSurveyForm(row: SurveyFormRow): SurveyForm {
@@ -1064,7 +1182,7 @@ export const surveyService = {
   },
 
   async submitSurveyResponse(input: SubmitSurveyResponseInput): Promise<SubmittedSurveyResponse> {
-    return withTransaction(async (client) => {
+    const submission = await withTransaction(async (client) => {
       const form = await resolveSurveyForm(client, input);
 
       if (!form.isActive) {
@@ -1091,6 +1209,8 @@ export const surveyService = {
         throw new Error(`Respondent not found: ${input.respondentId}`);
       }
 
+      const respondentSignature = await resolveRespondentSignature(input, form);
+
       const responseResult = await client.query<SurveyResponseRow>(
         `
           INSERT INTO ${TABLES.surveyResponses} (
@@ -1114,7 +1234,7 @@ export const surveyService = {
         [
           form.id,
           respondent?.id ?? null,
-          sanitizeText(input.respondentSignature),
+          respondentSignature,
           input.voluntaryConsent,
         ],
       );
@@ -1154,17 +1274,38 @@ export const surveyService = {
       }
 
       return {
-        ...response,
+        response: {
+          ...response,
+          respondent,
+          answers: savedAnswers,
+        },
+        form,
         respondent,
-        answers: savedAnswers,
       };
     });
+
+    try {
+      await sendResponseReviewEmail({
+        response: submission.response,
+        form: submission.form,
+        respondent: submission.respondent,
+      });
+    } catch (error) {
+      console.error("Unable to send survey response review email.", error);
+    }
+
+    return submission.response;
   },
 
   async listSurveyResponses(options: ListSurveyResponsesOptions = {}) {
     const pool = getPool();
     const filters: string[] = [];
     const values: unknown[] = [];
+
+    if (options.responseId) {
+      values.push(options.responseId);
+      filters.push(`sr.id = $${values.length}`);
+    }
 
     if (options.formId) {
       values.push(options.formId);
@@ -1242,37 +1383,69 @@ export const surveyService = {
   },
 
   async getResponseAnswers(responseId: string) {
-    const pool = getPool();
-    const result = await pool.query<SurveyAnswerDetailRow>(
-      `
-        SELECT
-          sa.id,
-          sa.response_id,
-          sa.item_id,
-          sa.rating,
-          sa.created_at,
-          sa.updated_at,
-          sf.id AS form_id,
-          sf.code AS form_code,
-          sf.title AS form_title,
-          ss.id AS section_id,
-          ss.code AS section_code,
-          ss.title AS section_title,
-          si.code AS item_code,
-          si.statement AS item_statement,
-          si.sort_order AS item_sort_order
-        FROM ${TABLES.surveyAnswers} sa
-        JOIN ${TABLES.surveyResponses} sr ON sr.id = sa.response_id
-        JOIN ${TABLES.surveyForms} sf ON sf.id = sr.form_id
-        JOIN ${TABLES.surveyItems} si ON si.id = sa.item_id
-        JOIN ${TABLES.surveySections} ss ON ss.id = si.section_id AND ss.form_id = sf.id
-        WHERE sa.response_id = $1
-        ORDER BY ss.sort_order ASC, si.sort_order ASC, sa.created_at ASC
-      `,
-      [responseId],
-    );
+    return getResponseAnswerDetails(responseId);
+  },
 
-    return result.rows.map(mapSurveyResponseAnswer);
+  async resendSurveyResponseReviewEmail(responseId: string) {
+    const [response] = await this.listSurveyResponses({
+      responseId,
+      submittedOnly: false,
+      limit: 1,
+    });
+
+    if (!response) {
+      throw new Error("Survey response not found.");
+    }
+
+    if (!response.respondentEmail) {
+      throw new Error("The selected response does not have a respondent email address.");
+    }
+
+    const answers = await getResponseAnswerDetails(responseId);
+
+    await sendSurveyResponseReviewEmail({
+      to: response.respondentEmail,
+      response,
+      answers,
+    });
+
+    return {
+      response,
+      answers,
+    };
+  },
+
+  async deleteSurveyResponse(responseId: string) {
+    return withTransaction(async (client) => {
+      const existingResponse = await client.query<SurveyResponseRow>(
+        `
+          SELECT
+            id,
+            form_id,
+            respondent_id,
+            respondent_signature,
+            voluntary_consent,
+            submitted_at,
+            created_at,
+            updated_at
+          FROM ${TABLES.surveyResponses}
+          WHERE id = $1
+          LIMIT 1
+        `,
+        [responseId],
+      );
+
+      const responseRow = existingResponse.rows[0];
+
+      if (!responseRow) {
+        return null;
+      }
+
+      await client.query(`DELETE FROM ${TABLES.surveyAnswers} WHERE response_id = $1`, [responseId]);
+      await client.query(`DELETE FROM ${TABLES.surveyResponses} WHERE id = $1`, [responseId]);
+
+      return mapSurveyResponse(responseRow);
+    });
   },
 
   async closePool() {
