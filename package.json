@@ -14,6 +14,10 @@
     "seed": "tsx src/database/seeder/seed-questionnaires.ts"
   },
   "dependencies": {
+    "@stdlib/stats-base-max": "^0.2.2",
+    "@stdlib/stats-base-mean": "^0.2.2",
+    "@stdlib/stats-base-min": "^0.2.2",
+    "@stdlib/stats-base-stdev": "^0.2.2",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
