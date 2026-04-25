@@ -93,6 +93,25 @@ export function createObjectKey(filename: string, folder = "") {
   return parts.join("/");
 }
 
+function getAwsS3VirtualHostedHost(bucketName: string, region: string) {
+  return `${bucketName}.s3-${region}.amazonaws.com`;
+}
+
+function getAwsS3RegionFromEndpointHost(hostname: string) {
+  const regionalEndpointMatch = hostname.match(/^s3[.-]([a-z0-9-]+)\.amazonaws\.com$/i);
+  const virtualHostedMatch = hostname.match(/^[^.]+\.s3[.-]([a-z0-9-]+)\.amazonaws\.com$/i);
+
+  return regionalEndpointMatch?.[1] || virtualHostedMatch?.[1] || env.s3.region;
+}
+
+function isAwsS3EndpointHost(hostname: string) {
+  return /(^|\.)s3[.-][a-z0-9-]+\.amazonaws\.com$/i.test(hostname) || /^s3\.amazonaws\.com$/i.test(hostname);
+}
+
+function getDefaultS3ObjectUrl(bucketName: string, region: string, encodedKey: string) {
+  return `https://${getAwsS3VirtualHostedHost(bucketName, region)}/${encodedKey}`;
+}
+
 function getEndpointObjectUrl(endpoint: string, bucketName: string, encodedKey: string) {
   if (!endpoint) {
     return "";
@@ -100,9 +119,20 @@ function getEndpointObjectUrl(endpoint: string, bucketName: string, encodedKey: 
 
   const endpointUrl = new URL(endpoint);
   const pathname = endpointUrl.pathname.replace(/\/+$/g, "");
+  const virtualHostedAwsMatch = endpointUrl.hostname.match(/^[^.]+\.s3[.-]([a-z0-9-]+)\.amazonaws\.com$/i);
 
   if (env.s3.forcePathStyle) {
     return `${endpointUrl.origin}${pathname}/${bucketName}/${encodedKey}`;
+  }
+
+  if (virtualHostedAwsMatch) {
+    return `${endpointUrl.protocol}//${endpointUrl.host}${pathname}/${encodedKey}`;
+  }
+
+  if (isAwsS3EndpointHost(endpointUrl.hostname)) {
+    const region = getAwsS3RegionFromEndpointHost(endpointUrl.hostname);
+
+    return `${endpointUrl.protocol}//${getAwsS3VirtualHostedHost(bucketName, region)}${pathname}/${encodedKey}`;
   }
 
   return `${endpointUrl.protocol}//${bucketName}.${endpointUrl.host}${pathname}/${encodedKey}`;
@@ -123,7 +153,7 @@ function getPublicObjectUrl(key: string) {
     return getEndpointObjectUrl(config.endpoint, config.bucketName, encodedKey);
   }
 
-  return `https://${config.bucketName}.s3.${config.region}.amazonaws.com/${encodedKey}`;
+  return getDefaultS3ObjectUrl(config.bucketName, config.region, encodedKey);
 }
 
 function getBase64UploadParts(dataUrl: string) {
@@ -162,6 +192,8 @@ export async function uploadBase64Object(params: {
       Key: key,
       Body: buffer,
       ContentType: contentType,
+      ContentDisposition: "inline",
+      CacheControl: "public, max-age=31536000, immutable",
       Metadata: {
         source: "surveystat-signature",
       },
