@@ -2,6 +2,12 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+const defaultClientOrigins = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "https://surveystat.jrmsu-tc.online",
+];
+
 function readEnv(key: string, fallback = "") {
   return process.env[key]?.trim() || fallback;
 }
@@ -26,10 +32,40 @@ function readNumberEnv(key: string, fallback: number) {
   return value;
 }
 
+function normalizeOrigin(origin: string) {
+  const trimmedOrigin = origin.trim().replace(/\/+$/, "");
+
+  if (!trimmedOrigin || trimmedOrigin === "*") {
+    return trimmedOrigin;
+  }
+
+  try {
+    return new URL(trimmedOrigin).origin;
+  } catch {
+    return trimmedOrigin;
+  }
+}
+
+function readListEnv(key: string, fallback: string[] = []) {
+  const rawValue = readEnv(key);
+  const values = rawValue ? rawValue.split(",") : fallback;
+
+  return Array.from(
+    new Set(
+      values
+        .map((value) => normalizeOrigin(value))
+        .filter(Boolean),
+    ),
+  );
+}
+
+const clientOrigins = readListEnv("CLIENT_ORIGIN", defaultClientOrigins);
+
 export const env = {
   nodeEnv: readEnv("NODE_ENV", "development"),
   port: readNumberEnv("PORT", 8080),
-  clientOrigin: readEnv("CLIENT_ORIGIN"),
+  clientOrigin: clientOrigins.join(","),
+  clientOrigins,
   serverPublicUrl: readEnv("SERVER_PUBLIC_URL"),
 
   database: {
