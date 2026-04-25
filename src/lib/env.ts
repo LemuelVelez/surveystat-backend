@@ -48,6 +48,8 @@ export const env = {
 
   s3: {
     region: readEnv("AWS_REGION", "ap-southeast-2"),
+    endpoint: readEnv("S3_ENDPOINT") || readEnv("AWS_ENDPOINT_URL_S3") || readEnv("AWS_S3_ENDPOINT"),
+    forcePathStyle: readBooleanEnv("S3_FORCE_PATH_STYLE", false),
     bucketName: readEnv("S3_BUCKET_NAME"),
     accessKeyId: readEnv("AWS_ACCESS_KEY_ID"),
     secretAccessKey: readEnv("AWS_SECRET_ACCESS_KEY"),

@@ -6,6 +6,8 @@ import { env } from "./env.js";
 
 export type BucketConfig = {
   region: string;
+  endpoint: string;
+  forcePathStyle: boolean;
   bucketName: string;
   prefix: string;
   publicBaseUrl: string;
@@ -24,6 +26,8 @@ let sharedS3Client: S3Client | null = null;
 export function getBucketConfig(): BucketConfig {
   return {
     region: env.s3.region,
+    endpoint: normalizeOptionalUrl(env.s3.endpoint),
+    forcePathStyle: env.s3.forcePathStyle,
     bucketName: env.s3.bucketName,
     prefix: normalizePrefix(env.s3.prefix),
     publicBaseUrl: normalizeOptionalUrl(env.s3.publicBaseUrl),
@@ -57,8 +61,13 @@ function getS3Client() {
   assertBucketConfig();
 
   if (!sharedS3Client) {
+    const endpoint = normalizeOptionalUrl(env.s3.endpoint);
+
     sharedS3Client = new S3Client({
       region: env.s3.region,
+      endpoint: endpoint || undefined,
+      forcePathStyle: env.s3.forcePathStyle,
+      followRegionRedirects: true,
       credentials: {
         accessKeyId: env.s3.accessKeyId,
         secretAccessKey: env.s3.secretAccessKey,
@@ -84,6 +93,21 @@ export function createObjectKey(filename: string, folder = "") {
   return parts.join("/");
 }
 
+function getEndpointObjectUrl(endpoint: string, bucketName: string, encodedKey: string) {
+  if (!endpoint) {
+    return "";
+  }
+
+  const endpointUrl = new URL(endpoint);
+  const pathname = endpointUrl.pathname.replace(/\/+$/g, "");
+
+  if (env.s3.forcePathStyle) {
+    return `${endpointUrl.origin}${pathname}/${bucketName}/${encodedKey}`;
+  }
+
+  return `${endpointUrl.protocol}//${bucketName}.${endpointUrl.host}${pathname}/${encodedKey}`;
+}
+
 function getPublicObjectUrl(key: string) {
   const config = getBucketConfig();
   const encodedKey = key
@@ -93,6 +117,10 @@ function getPublicObjectUrl(key: string) {
 
   if (config.publicBaseUrl) {
     return `${config.publicBaseUrl}/${encodedKey}`;
+  }
+
+  if (config.endpoint) {
+    return getEndpointObjectUrl(config.endpoint, config.bucketName, encodedKey);
   }
 
   return `https://${config.bucketName}.s3.${config.region}.amazonaws.com/${encodedKey}`;
