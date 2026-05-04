@@ -5,6 +5,8 @@ export const TABLES = {
   surveyItems: "survey_items",
   surveyResponses: "survey_responses",
   surveyAnswers: "survey_answers",
+  manualSurveyResponseBatches: "manual_survey_response_batches",
+  manualSurveyAnswerCounts: "manual_survey_answer_counts",
 } as const;
 
 export const LIKERT_SCALE = [
@@ -90,6 +92,7 @@ export const VOLUNTARY_PARTICIPATION_NOTE = EXISTING_PROCESS_VOLUNTARY_NOTE;
 export type TableName = (typeof TABLES)[keyof typeof TABLES];
 export type LikertValue = 1 | 2 | 3 | 4 | 5;
 export type SurveyFormCode = string;
+export type SurveyResponseSource = "all" | "online" | "hardcopy";
 export type LikertScaleOption = {
   value: LikertValue;
   label: string;
@@ -173,6 +176,28 @@ export type SurveyAnswer = {
   responseId: string;
   itemId: string;
   rating: LikertValue;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type ManualSurveyResponseBatch = {
+  id: string;
+  formId: string;
+  batchLabel: string;
+  hardcopyResponseCount: number;
+  encodedBy?: string | null;
+  notes?: string | null;
+  encodedAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type ManualSurveyAnswerCount = {
+  id: string;
+  batchId: string;
+  itemId: string;
+  rating: LikertValue;
+  responseCount: number;
   createdAt: Date;
   updatedAt: Date;
 };

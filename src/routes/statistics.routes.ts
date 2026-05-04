@@ -1,6 +1,7 @@
 import { Router } from "express";
 
 import {
+  createManualHardcopyStatistics,
   getFormStatistics,
   getItemStatistics,
   getSectionStatistics,
@@ -13,5 +14,6 @@ router.get("/summary", getStatisticsSummary);
 router.get("/forms", getFormStatistics);
 router.get("/sections", getSectionStatistics);
 router.get("/items", getItemStatistics);
+router.post("/manual-hardcopy", createManualHardcopyStatistics);
 
 export default router;

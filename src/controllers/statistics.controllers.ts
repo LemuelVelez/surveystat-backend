@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 
 import { statisticsService } from "../services/statistics.services.js";
-import type { SurveyFormCode } from "../database/model/model.js";
+import type { SurveyFormCode, SurveyResponseSource } from "../database/model/model.js";
 
 function toDate(value: unknown) {
   if (value === undefined || value === null || value === "") {
@@ -21,6 +21,24 @@ function getFormCode(value: unknown) {
   return String(value) as SurveyFormCode;
 }
 
+function getResponseSource(value: unknown): SurveyResponseSource | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+
+  const responseSource = String(value).trim().toLowerCase();
+
+  if (["all", "online", "hardcopy"].includes(responseSource)) {
+    return responseSource as SurveyResponseSource;
+  }
+
+  if (responseSource === "manual" || responseSource === "paper") {
+    return "hardcopy";
+  }
+
+  throw new Error(`Invalid response source: ${value}`);
+}
+
 function getStatisticsFilters(query: Request["query"]) {
   return {
     formId: query.formId ? String(query.formId) : undefined,
@@ -30,6 +48,7 @@ function getStatisticsFilters(query: Request["query"]) {
     itemId: query.itemId ? String(query.itemId) : undefined,
     submittedFrom: toDate(query.submittedFrom),
     submittedTo: toDate(query.submittedTo),
+    responseSource: getResponseSource(query.responseSource ?? query.source),
   };
 }
 
@@ -83,6 +102,18 @@ export async function getItemStatistics(req: Request, res: Response) {
 
     res.status(200).json({
       data: statistics,
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+}
+
+export async function createManualHardcopyStatistics(req: Request, res: Response) {
+  try {
+    const result = await statisticsService.createManualHardcopyStatistics(req.body);
+
+    res.status(201).json({
+      data: result,
     });
   } catch (error) {
     sendError(res, error);
