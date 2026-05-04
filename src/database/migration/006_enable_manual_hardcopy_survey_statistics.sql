@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS manual_survey_response_batches (
   id TEXT PRIMARY KEY,
-  form_id TEXT NOT NULL REFERENCES survey_forms(id) ON DELETE CASCADE,
+  form_id UUID NOT NULL REFERENCES survey_forms(id) ON DELETE CASCADE,
   batch_label TEXT NOT NULL DEFAULT 'Hardcopy Survey Batch',
   hardcopy_response_count INTEGER NOT NULL DEFAULT 0,
   encoded_by TEXT,
@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS manual_survey_response_batches (
 CREATE TABLE IF NOT EXISTS manual_survey_answer_counts (
   id TEXT PRIMARY KEY,
   batch_id TEXT NOT NULL REFERENCES manual_survey_response_batches(id) ON DELETE CASCADE,
-  item_id TEXT NOT NULL REFERENCES survey_items(id) ON DELETE CASCADE,
+  item_id UUID NOT NULL REFERENCES survey_items(id) ON DELETE CASCADE,
   rating INTEGER NOT NULL,
   response_count INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
