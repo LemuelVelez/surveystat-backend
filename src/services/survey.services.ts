@@ -310,6 +310,41 @@ function createCodeFromTitle(title: string, fallback: string) {
   return code || fallback;
 }
 
+function createUniqueCode(rawCode: string | null | undefined, fallback: string, usedCodes: Set<string>) {
+  const baseCode = createCodeFromTitle(rawCode ?? "", fallback).slice(0, 60).replace(/_+$/g, "") || fallback;
+  let candidate = baseCode;
+  let duplicateNumber = 2;
+
+  while (usedCodes.has(candidate)) {
+    const suffix = `_${duplicateNumber}`;
+    candidate = `${baseCode.slice(0, Math.max(1, 60 - suffix.length))}${suffix}`;
+    duplicateNumber += 1;
+  }
+
+  usedCodes.add(candidate);
+  return candidate;
+}
+
+async function ensureSurveySectionsAllowMultipleSections(executor: DatabaseExecutor) {
+  await executor.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.table_constraints
+        WHERE table_schema = current_schema()
+          AND table_name = '${TABLES.surveySections}'
+          AND constraint_name = 'survey_sections_form_code_unique'
+          AND constraint_type = 'UNIQUE'
+      ) THEN
+        ALTER TABLE ${TABLES.surveySections} DROP CONSTRAINT survey_sections_form_code_unique;
+      END IF;
+    END $$;
+  `);
+
+  await executor.query(`DROP INDEX IF EXISTS survey_sections_form_code_unique;`);
+}
+
 function quotePostgresLiteral(value: string) {
   return `'${value.replace(/'/g, "''")}'`;
 }
@@ -763,6 +798,8 @@ async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFor
   const code = requireText(String(input.code ?? ""), "Survey code") as SurveyFormCode;
   const sections = input.sections ?? [];
 
+  await ensureSurveySectionsAllowMultipleSections(client);
+
   const formResult = await client.query<SurveyFormRow>(
     `
       INSERT INTO ${TABLES.surveyForms} (
@@ -836,8 +873,11 @@ async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFor
 
   const form = mapSurveyForm(formRow);
 
+  const usedSectionCodes = new Set<string>();
+
   for (const [sectionIndex, section] of sections.entries()) {
     const sectionTitle = requireText(section.title, `Section ${sectionIndex + 1} title`);
+    const sectionCode = createUniqueCode(sanitizeText(section.code) ?? sectionTitle, `section_${sectionIndex + 1}`, usedSectionCodes);
     const sectionResult = await client.query<SurveySectionRow>(
       `
         INSERT INTO ${TABLES.surveySections} (form_id, code, title, sort_order)
@@ -853,7 +893,7 @@ async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFor
       `,
       [
         form.id,
-        sanitizeText(section.code) ?? createCodeFromTitle(sectionTitle, `section_${sectionIndex + 1}`),
+        sectionCode,
         sectionTitle,
         normalizeSortOrder(section.sortOrder, sectionIndex + 1),
       ],
@@ -865,8 +905,12 @@ async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFor
       throw new Error(`Unable to create survey section: ${sectionTitle}`);
     }
 
+    const usedItemCodes = new Set<string>();
+
     for (const [itemIndex, item] of section.items.entries()) {
       const statement = requireText(item.statement, `Section ${sectionIndex + 1} item ${itemIndex + 1} statement`);
+      const itemCode = createUniqueCode(sanitizeText(item.code) ?? statement, `item_${itemIndex + 1}`, usedItemCodes);
+
       await client.query<SurveyItemRow>(
         `
           INSERT INTO ${TABLES.surveyItems} (section_id, code, statement, sort_order, is_required)
@@ -883,7 +927,7 @@ async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFor
         `,
         [
           sectionRow.id,
-          sanitizeText(item.code) ?? createCodeFromTitle(statement, `item_${itemIndex + 1}`),
+          itemCode,
           statement,
           normalizeSortOrder(item.sortOrder, itemIndex + 1),
           item.isRequired ?? true,
