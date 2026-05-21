@@ -8,6 +8,7 @@ import {
   type CreateSurveySeriesInput,
   type CreateSurveySectionInput,
   type SubmitSurveyResponseInput,
+  type UpdateSurveyFormInput,
   type UpdateSurveyFormRespondentInformationInput,
 } from "../services/survey.services.js";
 import type { LikertScaleOption, LikertValue, RespondentRole, SurveyFormCode } from "../database/model/model.js";
@@ -56,6 +57,10 @@ function getRouteParam(value: string | string[] | undefined, name: string) {
   }
 
   return trimmed;
+}
+
+function hasBodyField(body: Record<string, unknown>, key: string) {
+  return Object.prototype.hasOwnProperty.call(body, key);
 }
 
 function sendError(res: Response, error: unknown, status = 400) {
@@ -194,6 +199,17 @@ function getCreateSurveySeriesInput(body: Record<string, unknown>): CreateSurvey
 }
 
 
+function getUpdateSurveyFormInput(body: Record<string, unknown>): UpdateSurveyFormInput {
+  return {
+    title: hasBodyField(body, "title") ? String(body.title ?? "") : undefined,
+    description: hasBodyField(body, "description") ? toNullableString(body.description) : undefined,
+    respondentInformationRequired: hasBodyField(body, "respondentInformationRequired")
+      ? toBoolean(body.respondentInformationRequired, true)
+      : undefined,
+    isActive: hasBodyField(body, "isActive") ? toBoolean(body.isActive, true) : undefined,
+  };
+}
+
 function getUpdateSurveyFormRespondentInformationInput(
   body: Record<string, unknown>,
 ): UpdateSurveyFormRespondentInformationInput {
@@ -316,6 +332,48 @@ export async function getSurveyFormByCode(req: Request, res: Response) {
   }
 }
 
+
+export async function updateSurveyForm(req: Request, res: Response) {
+  try {
+    const formId = getRouteParam(req.params.formId, "formId");
+    const form = await surveyService.updateSurveyForm(formId, getUpdateSurveyFormInput(req.body ?? {}));
+
+    if (!form) {
+      res.status(404).json({
+        message: "Survey form not found.",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      message: "Survey form updated successfully.",
+      data: form,
+    });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+}
+
+export async function deleteSurveyForm(req: Request, res: Response) {
+  try {
+    const formId = getRouteParam(req.params.formId, "formId");
+    const form = await surveyService.deleteSurveyForm(formId);
+
+    if (!form) {
+      res.status(404).json({
+        message: "Survey form not found.",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      message: "Survey form deleted successfully.",
+      data: form,
+    });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+}
 
 export async function updateSurveyFormRespondentInformation(req: Request, res: Response) {
   try {

@@ -181,6 +181,13 @@ export type CreateSurveySeriesInput = {
   forms: CreateSurveyFormInput[];
 };
 
+export type UpdateSurveyFormInput = {
+  title?: string;
+  description?: string | null;
+  respondentInformationRequired?: boolean;
+  isActive?: boolean;
+};
+
 export type UpdateSurveyFormRespondentInformationInput = {
   respondentInformationRequired: boolean;
 };
@@ -722,6 +729,57 @@ async function getSurveyFormByCode(executor: DatabaseExecutor, formCode: SurveyF
   return row ? mapSurveyForm(row) : null;
 }
 
+async function updateSurveyForm(formId: string, input: UpdateSurveyFormInput) {
+  const title = input.title !== undefined ? requireText(input.title, "Survey title") : null;
+  const shouldUpdateDescription = input.description !== undefined;
+  const description = shouldUpdateDescription ? sanitizeText(input.description) ?? "" : null;
+
+  const result = await getPool().query<SurveyFormRow>(
+    `
+      UPDATE ${TABLES.surveyForms}
+      SET
+        title = COALESCE($2::text, title),
+        description = CASE WHEN $3::boolean THEN $4::text ELSE description END,
+        respondent_information_required = COALESCE($5::boolean, respondent_information_required),
+        is_active = COALESCE($6::boolean, is_active),
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING
+        id,
+        code,
+        survey_series_id,
+        survey_step_number,
+        survey_series_title,
+        title,
+        description,
+        study_title,
+        document_header,
+        introduction,
+        researchers,
+        adviser,
+        instruction,
+        scale,
+        voluntary_note,
+        signature_label,
+        respondent_information_required,
+        is_active,
+        created_at,
+        updated_at
+    `,
+    [
+      formId,
+      title,
+      shouldUpdateDescription,
+      description,
+      input.respondentInformationRequired ?? null,
+      input.isActive ?? null,
+    ],
+  );
+
+  const row = result.rows[0];
+  return row ? mapSurveyForm(row) : null;
+}
+
 async function updateSurveyFormRespondentInformation(
   formId: string,
   input: UpdateSurveyFormRespondentInformationInput,
@@ -1185,6 +1243,10 @@ export const surveyService = {
     return getSurveyFormByCode(getPool(), formCode);
   },
 
+  async updateSurveyForm(formId: string, input: UpdateSurveyFormInput) {
+    return updateSurveyForm(formId, input);
+  },
+
   async updateSurveyFormRespondentInformation(formId: string, input: UpdateSurveyFormRespondentInformationInput) {
     return updateSurveyFormRespondentInformation(formId, input);
   },
@@ -1457,6 +1519,48 @@ export const surveyService = {
       response,
       answers,
     };
+  },
+
+  async deleteSurveyForm(formId: string) {
+    return withTransaction(async (client) => {
+      const form = await getSurveyFormById(client, formId);
+
+      if (!form) {
+        return null;
+      }
+
+      await client.query(
+        `
+          DELETE FROM ${TABLES.surveyAnswers}
+          WHERE response_id IN (
+            SELECT id FROM ${TABLES.surveyResponses}
+            WHERE form_id = $1
+          )
+          OR item_id IN (
+            SELECT si.id
+            FROM ${TABLES.surveyItems} si
+            JOIN ${TABLES.surveySections} ss ON ss.id = si.section_id
+            WHERE ss.form_id = $1
+          )
+        `,
+        [formId],
+      );
+      await client.query(`DELETE FROM ${TABLES.surveyResponses} WHERE form_id = $1`, [formId]);
+      await client.query(
+        `
+          DELETE FROM ${TABLES.surveyItems}
+          WHERE section_id IN (
+            SELECT id FROM ${TABLES.surveySections}
+            WHERE form_id = $1
+          )
+        `,
+        [formId],
+      );
+      await client.query(`DELETE FROM ${TABLES.surveySections} WHERE form_id = $1`, [formId]);
+      await client.query(`DELETE FROM ${TABLES.surveyForms} WHERE id = $1`, [formId]);
+
+      return form;
+    });
   },
 
   async deleteSurveyResponse(responseId: string) {
