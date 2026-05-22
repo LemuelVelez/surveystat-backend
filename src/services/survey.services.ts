@@ -192,6 +192,26 @@ export type UpdateSurveyFormRespondentInformationInput = {
   respondentInformationRequired: boolean;
 };
 
+export type UpdateSurveyItemInput = {
+  id?: string | null;
+  code?: string | null;
+  statement: string;
+  sortOrder?: number;
+  isRequired?: boolean;
+};
+
+export type UpdateSurveySectionInput = {
+  id?: string | null;
+  code?: string | null;
+  title: string;
+  sortOrder?: number;
+  items: UpdateSurveyItemInput[];
+};
+
+export type UpdateSurveyQuestionnaireInput = UpdateSurveyFormInput & {
+  sections?: UpdateSurveySectionInput[];
+};
+
 export type SubmitSurveyAnswerInput = {
   itemId: string;
   rating: LikertValue;
@@ -729,12 +749,12 @@ async function getSurveyFormByCode(executor: DatabaseExecutor, formCode: SurveyF
   return row ? mapSurveyForm(row) : null;
 }
 
-async function updateSurveyForm(formId: string, input: UpdateSurveyFormInput) {
+async function updateSurveyFormRecord(executor: DatabaseExecutor, formId: string, input: UpdateSurveyFormInput) {
   const title = input.title !== undefined ? requireText(input.title, "Survey title") : null;
   const shouldUpdateDescription = input.description !== undefined;
   const description = shouldUpdateDescription ? sanitizeText(input.description) ?? "" : null;
 
-  const result = await getPool().query<SurveyFormRow>(
+  const result = await executor.query<SurveyFormRow>(
     `
       UPDATE ${TABLES.surveyForms}
       SET
@@ -778,6 +798,244 @@ async function updateSurveyForm(formId: string, input: UpdateSurveyFormInput) {
 
   const row = result.rows[0];
   return row ? mapSurveyForm(row) : null;
+}
+
+async function updateSurveyForm(formId: string, input: UpdateSurveyFormInput) {
+  return updateSurveyFormRecord(getPool(), formId, input);
+}
+
+async function updateSurveySectionItems(
+  client: PoolClient,
+  sectionId: string,
+  sectionIndex: number,
+  items: UpdateSurveyItemInput[],
+) {
+  if (items.length === 0) {
+    throw new Error(`Section ${sectionIndex + 1} must have at least one survey item.`);
+  }
+
+  const existingItemsResult = await client.query<SurveyItemRow>(
+    `
+      SELECT
+        id,
+        section_id,
+        code,
+        statement,
+        sort_order,
+        is_required,
+        created_at,
+        updated_at
+      FROM ${TABLES.surveyItems}
+      WHERE section_id = $1
+      ORDER BY sort_order ASC, statement ASC
+    `,
+    [sectionId],
+  );
+  const existingItems = existingItemsResult.rows;
+  const existingItemIds = new Set(existingItems.map((item) => item.id));
+  const keptItemIds = new Set<string>();
+  const usedItemCodes = new Set<string>();
+
+  for (const [itemIndex, item] of items.entries()) {
+    const statement = requireText(item.statement, `Section ${sectionIndex + 1} item ${itemIndex + 1} statement`);
+    const itemCode = createUniqueCode(sanitizeText(item.code) ?? statement, `item_${itemIndex + 1}`, usedItemCodes);
+    const existingItemId = sanitizeText(item.id);
+
+    if (existingItemId && existingItemIds.has(existingItemId)) {
+      const updatedItem = await client.query<SurveyItemRow>(
+        `
+          UPDATE ${TABLES.surveyItems}
+          SET
+            code = $2,
+            statement = $3,
+            sort_order = $4,
+            is_required = $5,
+            updated_at = NOW()
+          WHERE id = $1
+            AND section_id = $6
+          RETURNING id
+        `,
+        [
+          existingItemId,
+          itemCode,
+          statement,
+          normalizeSortOrder(item.sortOrder, itemIndex + 1),
+          item.isRequired ?? true,
+          sectionId,
+        ],
+      );
+      const updatedItemId = updatedItem.rows[0]?.id;
+
+      if (updatedItemId) {
+        keptItemIds.add(updatedItemId);
+      }
+
+      continue;
+    }
+
+    const insertedItem = await client.query<SurveyItemRow>(
+      `
+        INSERT INTO ${TABLES.surveyItems} (section_id, code, statement, sort_order, is_required)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id
+      `,
+      [
+        sectionId,
+        itemCode,
+        statement,
+        normalizeSortOrder(item.sortOrder, itemIndex + 1),
+        item.isRequired ?? true,
+      ],
+    );
+    const insertedItemId = insertedItem.rows[0]?.id;
+
+    if (!insertedItemId) {
+      throw new Error(`Unable to create survey item: ${statement}`);
+    }
+
+    keptItemIds.add(insertedItemId);
+  }
+
+  const deletedItemIds = existingItems
+    .map((item) => item.id)
+    .filter((itemId) => !keptItemIds.has(itemId));
+
+  if (deletedItemIds.length > 0) {
+    await client.query(`DELETE FROM ${TABLES.surveyAnswers} WHERE item_id = ANY($1::uuid[])`, [deletedItemIds]);
+    await client.query(`DELETE FROM ${TABLES.manualSurveyAnswerCounts} WHERE item_id = ANY($1::uuid[])`, [deletedItemIds]);
+    await client.query(`DELETE FROM ${TABLES.surveyItems} WHERE id = ANY($1::uuid[])`, [deletedItemIds]);
+  }
+}
+
+async function replaceSurveyQuestionnaireSections(
+  client: PoolClient,
+  formId: string,
+  sections: UpdateSurveySectionInput[],
+) {
+  if (sections.length === 0) {
+    throw new Error("At least one survey section is required.");
+  }
+
+  await ensureSurveySectionsAllowMultipleSections(client);
+
+  const existingSectionsResult = await client.query<SurveySectionRow>(
+    `
+      SELECT
+        id,
+        form_id,
+        code,
+        title,
+        sort_order,
+        created_at,
+        updated_at
+      FROM ${TABLES.surveySections}
+      WHERE form_id = $1
+      ORDER BY sort_order ASC, title ASC
+    `,
+    [formId],
+  );
+  const existingSections = existingSectionsResult.rows;
+  const existingSectionIds = new Set(existingSections.map((section) => section.id));
+  const keptSectionIds = new Set<string>();
+  const usedSectionCodes = new Set<string>();
+
+  for (const [sectionIndex, section] of sections.entries()) {
+    const sectionTitle = requireText(section.title, `Section ${sectionIndex + 1} title`);
+    const sectionCode = createUniqueCode(sanitizeText(section.code) ?? sectionTitle, `section_${sectionIndex + 1}`, usedSectionCodes);
+    const existingSectionId = sanitizeText(section.id);
+    let sectionId = existingSectionId && existingSectionIds.has(existingSectionId) ? existingSectionId : null;
+
+    if (sectionId) {
+      const updatedSection = await client.query<SurveySectionRow>(
+        `
+          UPDATE ${TABLES.surveySections}
+          SET
+            code = $2,
+            title = $3,
+            sort_order = $4,
+            updated_at = NOW()
+          WHERE id = $1
+            AND form_id = $5
+          RETURNING id
+        `,
+        [
+          sectionId,
+          sectionCode,
+          sectionTitle,
+          normalizeSortOrder(section.sortOrder, sectionIndex + 1),
+          formId,
+        ],
+      );
+
+      sectionId = updatedSection.rows[0]?.id ?? null;
+    } else {
+      const insertedSection = await client.query<SurveySectionRow>(
+        `
+          INSERT INTO ${TABLES.surveySections} (form_id, code, title, sort_order)
+          VALUES ($1, $2, $3, $4)
+          RETURNING id
+        `,
+        [
+          formId,
+          sectionCode,
+          sectionTitle,
+          normalizeSortOrder(section.sortOrder, sectionIndex + 1),
+        ],
+      );
+
+      sectionId = insertedSection.rows[0]?.id ?? null;
+    }
+
+    if (!sectionId) {
+      throw new Error(`Unable to save survey section: ${sectionTitle}`);
+    }
+
+    keptSectionIds.add(sectionId);
+    await updateSurveySectionItems(client, sectionId, sectionIndex, section.items ?? []);
+  }
+
+  const deletedSectionIds = existingSections
+    .map((section) => section.id)
+    .filter((sectionId) => !keptSectionIds.has(sectionId));
+
+  if (deletedSectionIds.length > 0) {
+    const deletedItemsResult = await client.query<{ id: string }>(
+      `
+        SELECT id
+        FROM ${TABLES.surveyItems}
+        WHERE section_id = ANY($1::uuid[])
+      `,
+      [deletedSectionIds],
+    );
+    const deletedItemIds = deletedItemsResult.rows.map((item) => item.id);
+
+    if (deletedItemIds.length > 0) {
+      await client.query(`DELETE FROM ${TABLES.surveyAnswers} WHERE item_id = ANY($1::uuid[])`, [deletedItemIds]);
+      await client.query(`DELETE FROM ${TABLES.manualSurveyAnswerCounts} WHERE item_id = ANY($1::uuid[])`, [deletedItemIds]);
+      await client.query(`DELETE FROM ${TABLES.surveyItems} WHERE id = ANY($1::uuid[])`, [deletedItemIds]);
+    }
+
+    await client.query(`DELETE FROM ${TABLES.surveySections} WHERE id = ANY($1::uuid[])`, [deletedSectionIds]);
+  }
+}
+
+async function updateSurveyQuestionnaireForm(formId: string, input: UpdateSurveyQuestionnaireInput) {
+  return withTransaction(async (client) => {
+    const form = await updateSurveyFormRecord(client, formId, input);
+
+    if (!form) {
+      return null;
+    }
+
+    if (input.sections !== undefined) {
+      await replaceSurveyQuestionnaireSections(client, form.id, input.sections);
+    }
+
+    return {
+      ...form,
+      sections: await getQuestionnaireSections(client, form.id),
+    };
+  });
 }
 
 async function updateSurveyFormRespondentInformation(
@@ -1247,6 +1505,10 @@ export const surveyService = {
     return updateSurveyForm(formId, input);
   },
 
+  async updateSurveyQuestionnaireForm(formId: string, input: UpdateSurveyQuestionnaireInput) {
+    return updateSurveyQuestionnaireForm(formId, input);
+  },
+
   async updateSurveyFormRespondentInformation(formId: string, input: UpdateSurveyFormRespondentInformationInput) {
     return updateSurveyFormRespondentInformation(formId, input);
   },
@@ -1545,6 +1807,19 @@ export const surveyService = {
         `,
         [formId],
       );
+      await client.query(
+        `
+          DELETE FROM ${TABLES.manualSurveyAnswerCounts}
+          WHERE item_id IN (
+            SELECT si.id
+            FROM ${TABLES.surveyItems} si
+            JOIN ${TABLES.surveySections} ss ON ss.id = si.section_id
+            WHERE ss.form_id = $1
+          )
+        `,
+        [formId],
+      );
+      await client.query(`DELETE FROM ${TABLES.manualSurveyResponseBatches} WHERE form_id = $1`, [formId]);
       await client.query(`DELETE FROM ${TABLES.surveyResponses} WHERE form_id = $1`, [formId]);
       await client.query(
         `

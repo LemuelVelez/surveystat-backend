@@ -10,6 +10,9 @@ import {
   type SubmitSurveyResponseInput,
   type UpdateSurveyFormInput,
   type UpdateSurveyFormRespondentInformationInput,
+  type UpdateSurveyItemInput,
+  type UpdateSurveyQuestionnaireInput,
+  type UpdateSurveySectionInput,
 } from "../services/survey.services.js";
 import type { LikertScaleOption, LikertValue, RespondentRole, SurveyFormCode } from "../database/model/model.js";
 
@@ -218,6 +221,49 @@ function getUpdateSurveyFormRespondentInformationInput(
   };
 }
 
+function getUpdateSurveyItems(value: unknown): UpdateSurveyItemInput[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((item, index) => {
+    const itemBody = item as Record<string, unknown>;
+
+    return {
+      id: toNullableString(itemBody.id),
+      code: toNullableString(itemBody.code),
+      statement: String(itemBody.statement ?? ""),
+      sortOrder: toNumber(itemBody.sortOrder) ?? index + 1,
+      isRequired: toBoolean(itemBody.isRequired, true),
+    };
+  });
+}
+
+function getUpdateSurveySections(value: unknown): UpdateSurveySectionInput[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((section, index) => {
+    const sectionBody = section as Record<string, unknown>;
+
+    return {
+      id: toNullableString(sectionBody.id),
+      code: toNullableString(sectionBody.code),
+      title: String(sectionBody.title ?? ""),
+      sortOrder: toNumber(sectionBody.sortOrder) ?? index + 1,
+      items: getUpdateSurveyItems(sectionBody.items),
+    };
+  });
+}
+
+function getUpdateSurveyQuestionnaireInput(body: Record<string, unknown>): UpdateSurveyQuestionnaireInput {
+  return {
+    ...getUpdateSurveyFormInput(body),
+    sections: hasBodyField(body, "sections") ? getUpdateSurveySections(body.sections) : undefined,
+  };
+}
+
 function getRespondentInput(body: Record<string, unknown>): CreateRespondentInput {
   return {
     fullName: toNullableString(body.fullName),
@@ -347,6 +393,30 @@ export async function updateSurveyForm(req: Request, res: Response) {
 
     res.status(200).json({
       message: "Survey form updated successfully.",
+      data: form,
+    });
+  } catch (error) {
+    sendError(res, error, 500);
+  }
+}
+
+export async function updateSurveyQuestionnaireForm(req: Request, res: Response) {
+  try {
+    const formId = getRouteParam(req.params.formId, "formId");
+    const form = await surveyService.updateSurveyQuestionnaireForm(
+      formId,
+      getUpdateSurveyQuestionnaireInput(req.body ?? {}),
+    );
+
+    if (!form) {
+      res.status(404).json({
+        message: "Survey form not found.",
+      });
+      return;
+    }
+
+    res.status(200).json({
+      message: "Survey questionnaire updated successfully.",
       data: form,
     });
   } catch (error) {

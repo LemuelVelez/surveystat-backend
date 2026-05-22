@@ -2,7 +2,7 @@ import express from "express";
 import healthRoutes from "./routes/health.routes.js";
 import statisticsRoutes from "./routes/statistics.routes.js";
 import surveyRoutes from "./routes/survey.routes.js";
-import { deleteSurveyForm, updateSurveyForm } from "./controllers/survey.controllers.js";
+import { deleteSurveyForm, updateSurveyForm, updateSurveyQuestionnaireForm } from "./controllers/survey.controllers.js";
 import { configureMiddleware } from "./middleware/middleware.js";
 import { env, getServerAppUrl } from "./lib/env.js";
 
@@ -13,6 +13,7 @@ configureMiddleware(app);
 
 app.use("/health", healthRoutes);
 app.patch("/surveys/forms/:formId", updateSurveyForm);
+app.patch("/surveys/forms/:formId/questionnaire", updateSurveyQuestionnaireForm);
 app.delete("/surveys/forms/:formId", deleteSurveyForm);
 app.use("/surveys", surveyRoutes);
 app.use("/statistics", statisticsRoutes);
