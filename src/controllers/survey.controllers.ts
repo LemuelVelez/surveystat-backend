@@ -14,7 +14,7 @@ import {
   type UpdateSurveyQuestionnaireInput,
   type UpdateSurveySectionInput,
 } from "../services/survey.services.js";
-import type { LikertScaleOption, LikertValue, RespondentRole, SurveyFormCode } from "../database/model/model.js";
+import type { LikertScaleOption, LikertValue, RespondentInformationField, RespondentRole, SurveyFormCode } from "../database/model/model.js";
 
 function toBoolean(value: unknown, fallback: boolean) {
   if (value === undefined || value === null || value === "") {
@@ -84,6 +84,28 @@ function toStringArray(value: unknown) {
   }
 
   return value.map((item) => String(item).trim()).filter(Boolean);
+}
+
+const validRespondentInformationFields = new Set<RespondentInformationField>([
+  "fullName",
+  "email",
+  "role",
+  "office",
+  "program",
+]);
+
+function getRespondentInformationFields(value: unknown): RespondentInformationField[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const fields = value
+    .map((item) => String(item).trim())
+    .filter((field): field is RespondentInformationField =>
+      validRespondentInformationFields.has(field as RespondentInformationField),
+    );
+
+  return Array.from(new Set(fields));
 }
 
 function getLikertScale(value: unknown): CreateSurveyFormInput["scale"] {
@@ -185,6 +207,7 @@ function getCreateSurveyFormInput(body: Record<string, unknown>): CreateSurveyFo
     voluntaryNote: toNullableString(body.voluntaryNote),
     signatureLabel: toNullableString(body.signatureLabel),
     respondentInformationRequired: toBoolean(body.respondentInformationRequired, true),
+    respondentInformationFields: getRespondentInformationFields(body.respondentInformationFields),
     isActive: toBoolean(body.isActive, true),
     sections: getSurveySections(body.sections),
   };
@@ -209,6 +232,9 @@ function getUpdateSurveyFormInput(body: Record<string, unknown>): UpdateSurveyFo
     respondentInformationRequired: hasBodyField(body, "respondentInformationRequired")
       ? toBoolean(body.respondentInformationRequired, true)
       : undefined,
+    respondentInformationFields: hasBodyField(body, "respondentInformationFields")
+      ? getRespondentInformationFields(body.respondentInformationFields) ?? []
+      : undefined,
     isActive: hasBodyField(body, "isActive") ? toBoolean(body.isActive, true) : undefined,
   };
 }
@@ -218,6 +244,7 @@ function getUpdateSurveyFormRespondentInformationInput(
 ): UpdateSurveyFormRespondentInformationInput {
   return {
     respondentInformationRequired: toBoolean(body.respondentInformationRequired, false),
+    respondentInformationFields: getRespondentInformationFields(body.respondentInformationFields),
   };
 }
 

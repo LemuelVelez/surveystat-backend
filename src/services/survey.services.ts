@@ -4,12 +4,14 @@ import { assertDatabaseConfig, getDatabaseConfig } from "../lib/db.js";
 import { uploadBase64Object } from "../lib/bucket.js";
 import { sendSurveyResponseReviewEmail } from "../lib/email/response-email.js";
 import {
+  DEFAULT_RESPONDENT_INFORMATION_FIELDS,
   getLikertInterpretation,
   LIKERT_SCALE,
   TABLES,
   type LikertScale,
   type LikertValue,
   type Respondent,
+  type RespondentInformationField,
   type RespondentRole,
   type SurveyAnswer,
   type SurveyForm,
@@ -39,6 +41,7 @@ type SurveyFormRow = QueryResultRow & {
   voluntary_note: string | null;
   signature_label: string | null;
   respondent_information_required: boolean;
+  respondent_information_fields: RespondentInformationField[] | null;
   is_active: boolean;
   created_at: Date;
   updated_at: Date;
@@ -171,6 +174,7 @@ export type CreateSurveyFormInput = {
   voluntaryNote?: string | null;
   signatureLabel?: string | null;
   respondentInformationRequired?: boolean;
+  respondentInformationFields?: RespondentInformationField[];
   isActive?: boolean;
   sections?: CreateSurveySectionInput[];
 };
@@ -185,11 +189,13 @@ export type UpdateSurveyFormInput = {
   title?: string;
   description?: string | null;
   respondentInformationRequired?: boolean;
+  respondentInformationFields?: RespondentInformationField[];
   isActive?: boolean;
 };
 
 export type UpdateSurveyFormRespondentInformationInput = {
   respondentInformationRequired: boolean;
+  respondentInformationFields?: RespondentInformationField[];
 };
 
 export type UpdateSurveyItemInput = {
@@ -360,6 +366,38 @@ function createScopedSurveyCode(scopeCode: string, rawCode: string | null | unde
   return scopedCode.slice(0, 60).replace(/_+$/g, "") || fallback;
 }
 
+const respondentInformationFieldLabels: Record<RespondentInformationField, string> = {
+  fullName: "Respondent full name",
+  email: "Respondent email",
+  role: "Respondent role",
+  office: "Respondent office",
+  program: "Respondent program",
+};
+
+const validRespondentInformationFields = new Set<RespondentInformationField>([
+  "fullName",
+  "email",
+  "role",
+  "office",
+  "program",
+]);
+
+function normalizeRespondentInformationFields(
+  fields?: RespondentInformationField[] | null,
+  fallback: RespondentInformationField[] = DEFAULT_RESPONDENT_INFORMATION_FIELDS,
+) {
+  if (!Array.isArray(fields)) {
+    return fallback;
+  }
+
+  const normalizedFields = fields.filter((field): field is RespondentInformationField =>
+    validRespondentInformationFields.has(field),
+  );
+  const uniqueFields = Array.from(new Set(normalizedFields));
+
+  return uniqueFields.length > 0 ? uniqueFields : fallback;
+}
+
 async function getExistingCodes(
   executor: DatabaseExecutor,
   tableName: typeof TABLES.surveySections | typeof TABLES.surveyItems,
@@ -419,14 +457,19 @@ async function ensureSurveyFormCode(code: SurveyFormCode) {
   `);
 }
 
-function validateRespondentInformation(input?: CreateRespondentInput | null) {
+function validateRespondentInformation(
+  input: CreateRespondentInput | null | undefined,
+  fields: RespondentInformationField[] = DEFAULT_RESPONDENT_INFORMATION_FIELDS,
+) {
   if (!input) {
     throw new Error("Respondent information is required for this survey.");
   }
 
-  requireText(input.fullName, "Respondent full name");
-  requireText(input.email, "Respondent email");
-  requireText(String(input.role ?? ""), "Respondent role");
+  const requiredFields = normalizeRespondentInformationFields(fields);
+
+  for (const field of requiredFields) {
+    requireText(String(input[field] ?? ""), respondentInformationFieldLabels[field]);
+  }
 }
 
 function isLikertValue(value: number): value is LikertValue {
@@ -573,6 +616,7 @@ function mapSurveyForm(row: SurveyFormRow): SurveyForm {
     voluntaryNote: row.voluntary_note,
     signatureLabel: row.signature_label,
     respondentInformationRequired: row.respondent_information_required ?? true,
+    respondentInformationFields: normalizeRespondentInformationFields(row.respondent_information_fields),
     isActive: row.is_active,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -720,6 +764,7 @@ async function getSurveyFormById(executor: DatabaseExecutor, formId: string) {
         voluntary_note,
         signature_label,
         respondent_information_required,
+        respondent_information_fields,
         is_active,
         created_at,
         updated_at
@@ -755,6 +800,7 @@ async function getSurveyFormByCode(executor: DatabaseExecutor, formCode: SurveyF
         voluntary_note,
         signature_label,
         respondent_information_required,
+        respondent_information_fields,
         is_active,
         created_at,
         updated_at
@@ -781,7 +827,8 @@ async function updateSurveyFormRecord(executor: DatabaseExecutor, formId: string
         title = COALESCE($2::text, title),
         description = CASE WHEN $3::boolean THEN $4::text ELSE description END,
         respondent_information_required = COALESCE($5::boolean, respondent_information_required),
-        is_active = COALESCE($6::boolean, is_active),
+        respondent_information_fields = COALESCE($6::jsonb, respondent_information_fields),
+        is_active = COALESCE($7::boolean, is_active),
         updated_at = NOW()
       WHERE id = $1
       RETURNING
@@ -802,6 +849,7 @@ async function updateSurveyFormRecord(executor: DatabaseExecutor, formId: string
         voluntary_note,
         signature_label,
         respondent_information_required,
+        respondent_information_fields,
         is_active,
         created_at,
         updated_at
@@ -812,6 +860,14 @@ async function updateSurveyFormRecord(executor: DatabaseExecutor, formId: string
       shouldUpdateDescription,
       description,
       input.respondentInformationRequired ?? null,
+      input.respondentInformationFields !== undefined
+        ? JSON.stringify(
+            normalizeRespondentInformationFields(
+              input.respondentInformationFields,
+              input.respondentInformationRequired === true ? DEFAULT_RESPONDENT_INFORMATION_FIELDS : [],
+            ),
+          )
+        : null,
       input.isActive ?? null,
     ],
   );
@@ -1067,6 +1123,7 @@ async function updateSurveyFormRespondentInformation(
       UPDATE ${TABLES.surveyForms}
       SET
         respondent_information_required = $2,
+        respondent_information_fields = COALESCE($3::jsonb, respondent_information_fields),
         updated_at = NOW()
       WHERE id = $1
       RETURNING
@@ -1087,11 +1144,23 @@ async function updateSurveyFormRespondentInformation(
         voluntary_note,
         signature_label,
         respondent_information_required,
+        respondent_information_fields,
         is_active,
         created_at,
         updated_at
     `,
-    [formId, input.respondentInformationRequired],
+    [
+      formId,
+      input.respondentInformationRequired,
+      input.respondentInformationFields !== undefined
+        ? JSON.stringify(
+            normalizeRespondentInformationFields(
+              input.respondentInformationFields,
+              input.respondentInformationRequired === true ? DEFAULT_RESPONDENT_INFORMATION_FIELDS : [],
+            ),
+          )
+        : null,
+    ],
   );
 
   const row = result.rows[0];
@@ -1155,9 +1224,10 @@ async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFor
         voluntary_note,
         signature_label,
         respondent_information_required,
+        respondent_information_fields,
         is_active
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::jsonb, $11, $12, $13::jsonb, $14, $15, $16, $17)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::jsonb, $11, $12, $13::jsonb, $14, $15, $16::jsonb, $17)
       RETURNING
         id,
         code,
@@ -1176,6 +1246,7 @@ async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFor
         voluntary_note,
         signature_label,
         respondent_information_required,
+        respondent_information_fields,
         is_active,
         created_at,
         updated_at
@@ -1197,6 +1268,12 @@ async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFor
       sanitizeText(input.voluntaryNote),
       sanitizeText(input.signatureLabel) ?? "Respondent's Signature",
       input.respondentInformationRequired ?? true,
+      JSON.stringify(
+        normalizeRespondentInformationFields(
+          input.respondentInformationFields,
+          input.respondentInformationRequired === false ? [] : DEFAULT_RESPONDENT_INFORMATION_FIELDS,
+        ),
+      ),
       input.isActive ?? true,
     ],
   );
@@ -1507,6 +1584,7 @@ export const surveyService = {
           voluntary_note,
           signature_label,
           respondent_information_required,
+          respondent_information_fields,
           is_active,
           created_at,
           updated_at
@@ -1589,7 +1667,7 @@ export const surveyService = {
       }
 
       if (form.respondentInformationRequired && !input.respondentId) {
-        validateRespondentInformation(input.respondent);
+        validateRespondentInformation(input.respondent, form.respondentInformationFields);
       }
 
       await validateSurveyAnswers(client, form.id, input.answers);

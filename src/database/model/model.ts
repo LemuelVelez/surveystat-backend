@@ -103,6 +103,9 @@ export type LikertScaleOption = {
 };
 export type LikertScale = readonly LikertScaleOption[];
 export type RespondentRole = "qa_personnel" | "system_user" | "validator" | "accreditor" | "researcher" | "other";
+export type RespondentInformationField = "fullName" | "email" | "role" | "office" | "program";
+
+export const DEFAULT_RESPONDENT_INFORMATION_FIELDS: RespondentInformationField[] = ["fullName", "email", "role"];
 
 export type Respondent = {
   id: string;
@@ -134,6 +137,7 @@ export type SurveyForm = {
   voluntaryNote?: string | null;
   signatureLabel?: string | null;
   respondentInformationRequired: boolean;
+  respondentInformationFields: RespondentInformationField[];
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -232,6 +236,7 @@ export type QuestionnaireFormSeed = {
   voluntaryNote: string;
   signatureLabel: string;
   respondentInformationRequired: boolean;
+  respondentInformationFields?: RespondentInformationField[];
   sections: QuestionnaireSectionSeed[];
 };
 
@@ -249,6 +254,7 @@ export const QUESTIONNAIRE_FORMS: QuestionnaireFormSeed[] = [
     voluntaryNote: EXISTING_PROCESS_VOLUNTARY_NOTE,
     signatureLabel: RESPONDENT_SIGNATURE_LABEL,
     respondentInformationRequired: true,
+    respondentInformationFields: DEFAULT_RESPONDENT_INFORMATION_FIELDS,
     instruction:
       "Please examine the existing processes employed by QA Personnel during AACCUP accreditation at JRMSU-TC in terms of the collection, organization, submission, and validation of accreditation evidence. Carefully read each statement and place a check mark (✓) under the number that best describes your assessment of the current practices. Please provide honest and objective responses based on actual institutional procedures and experiences.",
     sections: [
@@ -413,6 +419,7 @@ export const QUESTIONNAIRE_FORMS: QuestionnaireFormSeed[] = [
     voluntaryNote: SYSTEM_EVALUATION_VOLUNTARY_NOTE,
     signatureLabel: RESPONDENT_SIGNATURE_LABEL,
     respondentInformationRequired: true,
+    respondentInformationFields: DEFAULT_RESPONDENT_INFORMATION_FIELDS,
     instruction:
       "Please evaluate the developed Digital Repository System for AACCUP accreditation based on Dr. Garvin's Eight Dimensions of Quality Framework, namely: performance, features, reliability, conformance, durability, serviceability, aesthetics, and perceived quality. Carefully read and assess each indicator, then place a check mark (✓) under the appropriate number that best reflects your evaluation of the system. Your responses should be based on your personal experience, observation, and actual use of the system.",
     sections: [
@@ -704,6 +711,7 @@ export const QUESTIONNAIRE_FORMS: QuestionnaireFormSeed[] = [
     voluntaryNote: EXISTING_PROCESS_VOLUNTARY_NOTE,
     signatureLabel: RESPONDENT_SIGNATURE_LABEL,
     respondentInformationRequired: false,
+    respondentInformationFields: [],
     instruction:
       "Please evaluate your experience as a respondent of the Digital Repository System survey workflow. Carefully read each statement and place a check mark (✓) under the appropriate number that best reflects your experience.",
     sections: [
