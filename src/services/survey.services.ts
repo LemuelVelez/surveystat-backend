@@ -352,6 +352,26 @@ function createUniqueCode(rawCode: string | null | undefined, fallback: string, 
   return candidate;
 }
 
+function createScopedSurveyCode(scopeCode: string, rawCode: string | null | undefined, fallback: string) {
+  const scope = createCodeFromTitle(scopeCode, "survey").slice(0, 32).replace(/_+$/g, "");
+  const base = createCodeFromTitle(rawCode ?? "", fallback).replace(/_+$/g, "") || fallback;
+  const scopedCode = `${scope}_${base}`.replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+
+  return scopedCode.slice(0, 60).replace(/_+$/g, "") || fallback;
+}
+
+async function getExistingCodes(
+  executor: DatabaseExecutor,
+  tableName: typeof TABLES.surveySections | typeof TABLES.surveyItems,
+) {
+  const result = await executor.query<{ code: string }>(`
+    SELECT code
+    FROM ${tableName}
+  `);
+
+  return new Set(result.rows.map((row) => row.code));
+}
+
 async function ensureSurveySectionsAllowMultipleSections(executor: DatabaseExecutor) {
   await executor.query(`
     DO $$
@@ -1189,11 +1209,16 @@ async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFor
 
   const form = mapSurveyForm(formRow);
 
-  const usedSectionCodes = new Set<string>();
+  const usedSectionCodes = await getExistingCodes(client, TABLES.surveySections);
+  const usedItemCodes = await getExistingCodes(client, TABLES.surveyItems);
 
   for (const [sectionIndex, section] of sections.entries()) {
     const sectionTitle = requireText(section.title, `Section ${sectionIndex + 1} title`);
-    const sectionCode = createUniqueCode(sanitizeText(section.code) ?? sectionTitle, `section_${sectionIndex + 1}`, usedSectionCodes);
+    const sectionCode = createUniqueCode(
+      createScopedSurveyCode(code, sanitizeText(section.code) ?? sectionTitle, `section_${sectionIndex + 1}`),
+      `section_${sectionIndex + 1}`,
+      usedSectionCodes,
+    );
     const sectionResult = await client.query<SurveySectionRow>(
       `
         INSERT INTO ${TABLES.surveySections} (form_id, code, title, sort_order)
@@ -1221,11 +1246,13 @@ async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFor
       throw new Error(`Unable to create survey section: ${sectionTitle}`);
     }
 
-    const usedItemCodes = new Set<string>();
-
     for (const [itemIndex, item] of section.items.entries()) {
       const statement = requireText(item.statement, `Section ${sectionIndex + 1} item ${itemIndex + 1} statement`);
-      const itemCode = createUniqueCode(sanitizeText(item.code) ?? statement, `item_${itemIndex + 1}`, usedItemCodes);
+      const itemCode = createUniqueCode(
+        createScopedSurveyCode(sectionCode, sanitizeText(item.code) ?? `item_${itemIndex + 1}`, `item_${itemIndex + 1}`),
+        `item_${itemIndex + 1}`,
+        usedItemCodes,
+      );
 
       await client.query<SurveyItemRow>(
         `
