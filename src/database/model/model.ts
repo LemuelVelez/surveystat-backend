@@ -102,7 +102,7 @@ export type LikertScaleOption = {
   maxMean?: number;
 };
 export type LikertScale = readonly LikertScaleOption[];
-export type RespondentRole = "qa_personnel" | "system_user" | "validator" | "accreditor" | "researcher" | "other";
+export type RespondentRole = string;
 export type RespondentInformationField = "fullName" | "email" | "role" | "office" | "program";
 
 export const DEFAULT_RESPONDENT_INFORMATION_FIELDS: RespondentInformationField[] = ["fullName", "email", "role"];
