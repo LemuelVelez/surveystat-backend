@@ -5,6 +5,7 @@ import { uploadBase64Object } from "../lib/bucket.js";
 import { sendSurveyResponseReviewEmail } from "../lib/email/response-email.js";
 import {
   DEFAULT_RESPONDENT_INFORMATION_FIELDS,
+  DEFAULT_RESPONDENT_ROLE_OPTIONS,
   getLikertInterpretation,
   LIKERT_SCALE,
   TABLES,
@@ -13,6 +14,7 @@ import {
   type Respondent,
   type RespondentInformationField,
   type RespondentRole,
+  type RespondentRoleOption,
   type SurveyAnswer,
   type SurveyForm,
   type SurveyFormCode,
@@ -42,6 +44,7 @@ type SurveyFormRow = QueryResultRow & {
   signature_label: string | null;
   respondent_information_required: boolean;
   respondent_information_fields: RespondentInformationField[] | null;
+  respondent_role_options: RespondentRoleOption[] | null;
   is_active: boolean;
   created_at: Date;
   updated_at: Date;
@@ -175,6 +178,7 @@ export type CreateSurveyFormInput = {
   signatureLabel?: string | null;
   respondentInformationRequired?: boolean;
   respondentInformationFields?: RespondentInformationField[];
+  respondentRoleOptions?: RespondentRoleOption[];
   isActive?: boolean;
   sections?: CreateSurveySectionInput[];
 };
@@ -190,12 +194,14 @@ export type UpdateSurveyFormInput = {
   description?: string | null;
   respondentInformationRequired?: boolean;
   respondentInformationFields?: RespondentInformationField[];
+  respondentRoleOptions?: RespondentRoleOption[];
   isActive?: boolean;
 };
 
 export type UpdateSurveyFormRespondentInformationInput = {
   respondentInformationRequired: boolean;
   respondentInformationFields?: RespondentInformationField[];
+  respondentRoleOptions?: RespondentRoleOption[];
 };
 
 export type UpdateSurveyItemInput = {
@@ -343,8 +349,15 @@ function createCodeFromTitle(title: string, fallback: string) {
   return code || fallback;
 }
 
-function createUniqueCode(rawCode: string | null | undefined, fallback: string, usedCodes: Set<string>) {
-  const baseCode = createCodeFromTitle(rawCode ?? "", fallback).slice(0, 60).replace(/_+$/g, "") || fallback;
+function createUniqueCode(
+  rawCode: string | null | undefined,
+  fallback: string,
+  usedCodes: Set<string>,
+) {
+  const baseCode =
+    createCodeFromTitle(rawCode ?? "", fallback)
+      .slice(0, 60)
+      .replace(/_+$/g, "") || fallback;
   let candidate = baseCode;
   let duplicateNumber = 2;
 
@@ -358,15 +371,28 @@ function createUniqueCode(rawCode: string | null | undefined, fallback: string, 
   return candidate;
 }
 
-function createScopedSurveyCode(scopeCode: string, rawCode: string | null | undefined, fallback: string) {
-  const scope = createCodeFromTitle(scopeCode, "survey").slice(0, 32).replace(/_+$/g, "");
-  const base = createCodeFromTitle(rawCode ?? "", fallback).replace(/_+$/g, "") || fallback;
-  const scopedCode = `${scope}_${base}`.replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+function createScopedSurveyCode(
+  scopeCode: string,
+  rawCode: string | null | undefined,
+  fallback: string,
+) {
+  const scope = createCodeFromTitle(scopeCode, "survey")
+    .slice(0, 32)
+    .replace(/_+$/g, "");
+  const base =
+    createCodeFromTitle(rawCode ?? "", fallback).replace(/_+$/g, "") ||
+    fallback;
+  const scopedCode = `${scope}_${base}`
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
 
   return scopedCode.slice(0, 60).replace(/_+$/g, "") || fallback;
 }
 
-const respondentInformationFieldLabels: Record<RespondentInformationField, string> = {
+const respondentInformationFieldLabels: Record<
+  RespondentInformationField,
+  string
+> = {
   fullName: "Respondent full name",
   email: "Respondent email",
   role: "Respondent role",
@@ -390,12 +416,58 @@ function normalizeRespondentInformationFields(
     return fallback;
   }
 
-  const normalizedFields = fields.filter((field): field is RespondentInformationField =>
-    validRespondentInformationFields.has(field),
+  const normalizedFields = fields.filter(
+    (field): field is RespondentInformationField =>
+      validRespondentInformationFields.has(field),
   );
   const uniqueFields = Array.from(new Set(normalizedFields));
 
   return uniqueFields.length > 0 ? uniqueFields : fallback;
+}
+
+function normalizeRespondentRoleOptions(
+  options?: RespondentRoleOption[] | null,
+  fallback: RespondentRoleOption[] = DEFAULT_RESPONDENT_ROLE_OPTIONS,
+) {
+  if (!Array.isArray(options)) {
+    return fallback;
+  }
+
+  const uniqueOptions = Array.from(
+    new Set(
+      options
+        .map((option) => sanitizeText(String(option ?? "")))
+        .filter((option): option is string => Boolean(option)),
+    ),
+  );
+
+  return uniqueOptions.length > 0 ? uniqueOptions : fallback;
+}
+
+function normalizeRespondentRoleOptionsForFields(params: {
+  fields?: RespondentInformationField[] | null;
+  roleOptions?: RespondentRoleOption[] | null;
+  fallbackFields?: RespondentInformationField[];
+  fallbackRoleOptions?: RespondentRoleOption[];
+}) {
+  const fields = Array.isArray(params.fields)
+    ? Array.from(
+        new Set(
+          params.fields.filter((field): field is RespondentInformationField =>
+            validRespondentInformationFields.has(field),
+          ),
+        ),
+      )
+    : (params.fallbackFields ?? []);
+
+  if (!fields.includes("role")) {
+    return [];
+  }
+
+  return normalizeRespondentRoleOptions(
+    params.roleOptions,
+    params.fallbackRoleOptions ?? DEFAULT_RESPONDENT_ROLE_OPTIONS,
+  );
 }
 
 async function getExistingCodes(
@@ -410,7 +482,9 @@ async function getExistingCodes(
   return new Set(result.rows.map((row) => row.code));
 }
 
-async function ensureSurveySectionsAllowMultipleSections(executor: DatabaseExecutor) {
+async function ensureSurveySectionsAllowMultipleSections(
+  executor: DatabaseExecutor,
+) {
   await executor.query(`
     DO $$
     BEGIN
@@ -427,7 +501,9 @@ async function ensureSurveySectionsAllowMultipleSections(executor: DatabaseExecu
     END $$;
   `);
 
-  await executor.query(`DROP INDEX IF EXISTS survey_sections_form_code_unique;`);
+  await executor.query(
+    `DROP INDEX IF EXISTS survey_sections_form_code_unique;`,
+  );
 }
 
 function quotePostgresLiteral(value: string) {
@@ -468,7 +544,10 @@ function validateRespondentInformation(
   const requiredFields = normalizeRespondentInformationFields(fields);
 
   for (const field of requiredFields) {
-    requireText(String(input[field] ?? ""), respondentInformationFieldLabels[field]);
+    requireText(
+      String(input[field] ?? ""),
+      respondentInformationFieldLabels[field],
+    );
   }
 }
 
@@ -478,7 +557,9 @@ function isLikertValue(value: number): value is LikertValue {
 
 function normalizeLikertValue(value: number) {
   if (!isLikertValue(value)) {
-    throw new Error(`Invalid Likert rating: ${value}. Expected a value from 1 to 5.`);
+    throw new Error(
+      `Invalid Likert rating: ${value}. Expected a value from 1 to 5.`,
+    );
   }
 
   return value;
@@ -488,7 +569,10 @@ function isBase64DataUrl(value?: string | null) {
   return Boolean(value?.trim().match(/^data:[^;,]+;base64,/));
 }
 
-async function resolveRespondentSignature(input: SubmitSurveyResponseInput, form: SurveyForm) {
+async function resolveRespondentSignature(
+  input: SubmitSurveyResponseInput,
+  form: SurveyForm,
+) {
   const signatureImage = sanitizeText(input.respondentSignatureImage);
 
   if (!signatureImage) {
@@ -496,7 +580,9 @@ async function resolveRespondentSignature(input: SubmitSurveyResponseInput, form
   }
 
   if (!isBase64DataUrl(signatureImage)) {
-    throw new Error("Invalid respondent signature image. Please upload or draw a valid image signature.");
+    throw new Error(
+      "Invalid respondent signature image. Please upload or draw a valid image signature.",
+    );
   }
 
   const uploadedSignature = await uploadBase64Object({
@@ -515,8 +601,12 @@ function createEmailSummary(params: {
   answers: SurveyResponseAnswer[];
 }): SurveyResponseSummary {
   const answerCount = params.answers.length;
-  const total = params.answers.reduce((sum, answer) => sum + Number(answer.rating ?? 0), 0);
-  const weightedMean = answerCount > 0 ? Number((total / answerCount).toFixed(2)) : 0;
+  const total = params.answers.reduce(
+    (sum, answer) => sum + Number(answer.rating ?? 0),
+    0,
+  );
+  const weightedMean =
+    answerCount > 0 ? Number((total / answerCount).toFixed(2)) : 0;
   const interpretation = getLikertInterpretation(weightedMean);
 
   return {
@@ -616,7 +706,14 @@ function mapSurveyForm(row: SurveyFormRow): SurveyForm {
     voluntaryNote: row.voluntary_note,
     signatureLabel: row.signature_label,
     respondentInformationRequired: row.respondent_information_required ?? true,
-    respondentInformationFields: normalizeRespondentInformationFields(row.respondent_information_fields),
+    respondentInformationFields: normalizeRespondentInformationFields(
+      row.respondent_information_fields,
+    ),
+    respondentRoleOptions: normalizeRespondentRoleOptionsForFields({
+      fields: row.respondent_information_fields,
+      roleOptions: row.respondent_role_options,
+      fallbackFields: DEFAULT_RESPONDENT_INFORMATION_FIELDS,
+    }),
     isActive: row.is_active,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -686,7 +783,9 @@ function mapSurveyAnswer(row: SurveyAnswerRow): SurveyAnswer {
   };
 }
 
-function mapSurveyResponseSummary(row: SurveyResponseSummaryRow): SurveyResponseSummary {
+function mapSurveyResponseSummary(
+  row: SurveyResponseSummaryRow,
+): SurveyResponseSummary {
   const weightedMean = Number(row.weighted_mean ?? 0);
   const interpretation = getLikertInterpretation(weightedMean);
 
@@ -706,7 +805,9 @@ function mapSurveyResponseSummary(row: SurveyResponseSummaryRow): SurveyResponse
   };
 }
 
-function mapSurveyResponseAnswer(row: SurveyAnswerDetailRow): SurveyResponseAnswer {
+function mapSurveyResponseAnswer(
+  row: SurveyAnswerDetailRow,
+): SurveyResponseAnswer {
   const rating = Number(row.rating) as LikertValue;
   const interpretation = getLikertInterpretation(rating);
 
@@ -726,7 +827,9 @@ function mapSurveyResponseAnswer(row: SurveyAnswerDetailRow): SurveyResponseAnsw
   };
 }
 
-async function withTransaction<T>(callback: (client: PoolClient) => Promise<T>) {
+async function withTransaction<T>(
+  callback: (client: PoolClient) => Promise<T>,
+) {
   const pool = getPool();
   const client = await pool.connect();
 
@@ -765,6 +868,7 @@ async function getSurveyFormById(executor: DatabaseExecutor, formId: string) {
         signature_label,
         respondent_information_required,
         respondent_information_fields,
+        respondent_role_options,
         is_active,
         created_at,
         updated_at
@@ -779,7 +883,10 @@ async function getSurveyFormById(executor: DatabaseExecutor, formId: string) {
   return row ? mapSurveyForm(row) : null;
 }
 
-async function getSurveyFormByCode(executor: DatabaseExecutor, formCode: SurveyFormCode) {
+async function getSurveyFormByCode(
+  executor: DatabaseExecutor,
+  formCode: SurveyFormCode,
+) {
   const result = await executor.query<SurveyFormRow>(
     `
       SELECT
@@ -801,6 +908,7 @@ async function getSurveyFormByCode(executor: DatabaseExecutor, formCode: SurveyF
         signature_label,
         respondent_information_required,
         respondent_information_fields,
+        respondent_role_options,
         is_active,
         created_at,
         updated_at
@@ -815,10 +923,39 @@ async function getSurveyFormByCode(executor: DatabaseExecutor, formCode: SurveyF
   return row ? mapSurveyForm(row) : null;
 }
 
-async function updateSurveyFormRecord(executor: DatabaseExecutor, formId: string, input: UpdateSurveyFormInput) {
-  const title = input.title !== undefined ? requireText(input.title, "Survey title") : null;
+async function updateSurveyFormRecord(
+  executor: DatabaseExecutor,
+  formId: string,
+  input: UpdateSurveyFormInput,
+) {
+  const title =
+    input.title !== undefined ? requireText(input.title, "Survey title") : null;
   const shouldUpdateDescription = input.description !== undefined;
-  const description = shouldUpdateDescription ? sanitizeText(input.description) ?? "" : null;
+  const description = shouldUpdateDescription
+    ? (sanitizeText(input.description) ?? "")
+    : null;
+  const respondentInformationFields =
+    input.respondentInformationFields !== undefined
+      ? normalizeRespondentInformationFields(
+          input.respondentInformationFields,
+          input.respondentInformationRequired === true
+            ? DEFAULT_RESPONDENT_INFORMATION_FIELDS
+            : [],
+        )
+      : undefined;
+  const respondentRoleOptions =
+    input.respondentRoleOptions !== undefined
+      ? normalizeRespondentRoleOptionsForFields({
+          fields:
+            respondentInformationFields ??
+            DEFAULT_RESPONDENT_INFORMATION_FIELDS,
+          roleOptions: input.respondentRoleOptions,
+          fallbackFields: DEFAULT_RESPONDENT_INFORMATION_FIELDS,
+        })
+      : respondentInformationFields !== undefined &&
+          !respondentInformationFields.includes("role")
+        ? []
+        : undefined;
 
   const result = await executor.query<SurveyFormRow>(
     `
@@ -828,7 +965,8 @@ async function updateSurveyFormRecord(executor: DatabaseExecutor, formId: string
         description = CASE WHEN $3::boolean THEN $4::text ELSE description END,
         respondent_information_required = COALESCE($5::boolean, respondent_information_required),
         respondent_information_fields = COALESCE($6::jsonb, respondent_information_fields),
-        is_active = COALESCE($7::boolean, is_active),
+        respondent_role_options = COALESCE($7::jsonb, respondent_role_options),
+        is_active = COALESCE($8::boolean, is_active),
         updated_at = NOW()
       WHERE id = $1
       RETURNING
@@ -850,6 +988,7 @@ async function updateSurveyFormRecord(executor: DatabaseExecutor, formId: string
         signature_label,
         respondent_information_required,
         respondent_information_fields,
+        respondent_role_options,
         is_active,
         created_at,
         updated_at
@@ -860,13 +999,11 @@ async function updateSurveyFormRecord(executor: DatabaseExecutor, formId: string
       shouldUpdateDescription,
       description,
       input.respondentInformationRequired ?? null,
-      input.respondentInformationFields !== undefined
-        ? JSON.stringify(
-            normalizeRespondentInformationFields(
-              input.respondentInformationFields,
-              input.respondentInformationRequired === true ? DEFAULT_RESPONDENT_INFORMATION_FIELDS : [],
-            ),
-          )
+      respondentInformationFields !== undefined
+        ? JSON.stringify(respondentInformationFields)
+        : null,
+      respondentRoleOptions !== undefined
+        ? JSON.stringify(respondentRoleOptions)
         : null,
       input.isActive ?? null,
     ],
@@ -887,7 +1024,9 @@ async function updateSurveySectionItems(
   items: UpdateSurveyItemInput[],
 ) {
   if (items.length === 0) {
-    throw new Error(`Section ${sectionIndex + 1} must have at least one survey item.`);
+    throw new Error(
+      `Section ${sectionIndex + 1} must have at least one survey item.`,
+    );
   }
 
   const existingItemsResult = await client.query<SurveyItemRow>(
@@ -913,8 +1052,15 @@ async function updateSurveySectionItems(
   const usedItemCodes = new Set<string>();
 
   for (const [itemIndex, item] of items.entries()) {
-    const statement = requireText(item.statement, `Section ${sectionIndex + 1} item ${itemIndex + 1} statement`);
-    const itemCode = createUniqueCode(sanitizeText(item.code) ?? statement, `item_${itemIndex + 1}`, usedItemCodes);
+    const statement = requireText(
+      item.statement,
+      `Section ${sectionIndex + 1} item ${itemIndex + 1} statement`,
+    );
+    const itemCode = createUniqueCode(
+      sanitizeText(item.code) ?? statement,
+      `item_${itemIndex + 1}`,
+      usedItemCodes,
+    );
     const existingItemId = sanitizeText(item.id);
 
     if (existingItemId && existingItemIds.has(existingItemId)) {
@@ -977,9 +1123,18 @@ async function updateSurveySectionItems(
     .filter((itemId) => !keptItemIds.has(itemId));
 
   if (deletedItemIds.length > 0) {
-    await client.query(`DELETE FROM ${TABLES.surveyAnswers} WHERE item_id = ANY($1::uuid[])`, [deletedItemIds]);
-    await client.query(`DELETE FROM ${TABLES.manualSurveyAnswerCounts} WHERE item_id = ANY($1::uuid[])`, [deletedItemIds]);
-    await client.query(`DELETE FROM ${TABLES.surveyItems} WHERE id = ANY($1::uuid[])`, [deletedItemIds]);
+    await client.query(
+      `DELETE FROM ${TABLES.surveyAnswers} WHERE item_id = ANY($1::uuid[])`,
+      [deletedItemIds],
+    );
+    await client.query(
+      `DELETE FROM ${TABLES.manualSurveyAnswerCounts} WHERE item_id = ANY($1::uuid[])`,
+      [deletedItemIds],
+    );
+    await client.query(
+      `DELETE FROM ${TABLES.surveyItems} WHERE id = ANY($1::uuid[])`,
+      [deletedItemIds],
+    );
   }
 }
 
@@ -1011,15 +1166,27 @@ async function replaceSurveyQuestionnaireSections(
     [formId],
   );
   const existingSections = existingSectionsResult.rows;
-  const existingSectionIds = new Set(existingSections.map((section) => section.id));
+  const existingSectionIds = new Set(
+    existingSections.map((section) => section.id),
+  );
   const keptSectionIds = new Set<string>();
   const usedSectionCodes = new Set<string>();
 
   for (const [sectionIndex, section] of sections.entries()) {
-    const sectionTitle = requireText(section.title, `Section ${sectionIndex + 1} title`);
-    const sectionCode = createUniqueCode(sanitizeText(section.code) ?? sectionTitle, `section_${sectionIndex + 1}`, usedSectionCodes);
+    const sectionTitle = requireText(
+      section.title,
+      `Section ${sectionIndex + 1} title`,
+    );
+    const sectionCode = createUniqueCode(
+      sanitizeText(section.code) ?? sectionTitle,
+      `section_${sectionIndex + 1}`,
+      usedSectionCodes,
+    );
     const existingSectionId = sanitizeText(section.id);
-    let sectionId = existingSectionId && existingSectionIds.has(existingSectionId) ? existingSectionId : null;
+    let sectionId =
+      existingSectionId && existingSectionIds.has(existingSectionId)
+        ? existingSectionId
+        : null;
 
     if (sectionId) {
       const updatedSection = await client.query<SurveySectionRow>(
@@ -1067,7 +1234,12 @@ async function replaceSurveyQuestionnaireSections(
     }
 
     keptSectionIds.add(sectionId);
-    await updateSurveySectionItems(client, sectionId, sectionIndex, section.items ?? []);
+    await updateSurveySectionItems(
+      client,
+      sectionId,
+      sectionIndex,
+      section.items ?? [],
+    );
   }
 
   const deletedSectionIds = existingSections
@@ -1086,16 +1258,31 @@ async function replaceSurveyQuestionnaireSections(
     const deletedItemIds = deletedItemsResult.rows.map((item) => item.id);
 
     if (deletedItemIds.length > 0) {
-      await client.query(`DELETE FROM ${TABLES.surveyAnswers} WHERE item_id = ANY($1::uuid[])`, [deletedItemIds]);
-      await client.query(`DELETE FROM ${TABLES.manualSurveyAnswerCounts} WHERE item_id = ANY($1::uuid[])`, [deletedItemIds]);
-      await client.query(`DELETE FROM ${TABLES.surveyItems} WHERE id = ANY($1::uuid[])`, [deletedItemIds]);
+      await client.query(
+        `DELETE FROM ${TABLES.surveyAnswers} WHERE item_id = ANY($1::uuid[])`,
+        [deletedItemIds],
+      );
+      await client.query(
+        `DELETE FROM ${TABLES.manualSurveyAnswerCounts} WHERE item_id = ANY($1::uuid[])`,
+        [deletedItemIds],
+      );
+      await client.query(
+        `DELETE FROM ${TABLES.surveyItems} WHERE id = ANY($1::uuid[])`,
+        [deletedItemIds],
+      );
     }
 
-    await client.query(`DELETE FROM ${TABLES.surveySections} WHERE id = ANY($1::uuid[])`, [deletedSectionIds]);
+    await client.query(
+      `DELETE FROM ${TABLES.surveySections} WHERE id = ANY($1::uuid[])`,
+      [deletedSectionIds],
+    );
   }
 }
 
-async function updateSurveyQuestionnaireForm(formId: string, input: UpdateSurveyQuestionnaireInput) {
+async function updateSurveyQuestionnaireForm(
+  formId: string,
+  input: UpdateSurveyQuestionnaireInput,
+) {
   return withTransaction(async (client) => {
     const form = await updateSurveyFormRecord(client, formId, input);
 
@@ -1118,12 +1305,36 @@ async function updateSurveyFormRespondentInformation(
   formId: string,
   input: UpdateSurveyFormRespondentInformationInput,
 ) {
+  const respondentInformationFields =
+    input.respondentInformationFields !== undefined
+      ? normalizeRespondentInformationFields(
+          input.respondentInformationFields,
+          input.respondentInformationRequired === true
+            ? DEFAULT_RESPONDENT_INFORMATION_FIELDS
+            : [],
+        )
+      : undefined;
+  const respondentRoleOptions =
+    input.respondentRoleOptions !== undefined
+      ? normalizeRespondentRoleOptionsForFields({
+          fields:
+            respondentInformationFields ??
+            DEFAULT_RESPONDENT_INFORMATION_FIELDS,
+          roleOptions: input.respondentRoleOptions,
+          fallbackFields: DEFAULT_RESPONDENT_INFORMATION_FIELDS,
+        })
+      : respondentInformationFields !== undefined &&
+          !respondentInformationFields.includes("role")
+        ? []
+        : undefined;
+
   const result = await getPool().query<SurveyFormRow>(
     `
       UPDATE ${TABLES.surveyForms}
       SET
         respondent_information_required = $2,
         respondent_information_fields = COALESCE($3::jsonb, respondent_information_fields),
+        respondent_role_options = COALESCE($4::jsonb, respondent_role_options),
         updated_at = NOW()
       WHERE id = $1
       RETURNING
@@ -1145,6 +1356,7 @@ async function updateSurveyFormRespondentInformation(
         signature_label,
         respondent_information_required,
         respondent_information_fields,
+        respondent_role_options,
         is_active,
         created_at,
         updated_at
@@ -1152,13 +1364,11 @@ async function updateSurveyFormRespondentInformation(
     [
       formId,
       input.respondentInformationRequired,
-      input.respondentInformationFields !== undefined
-        ? JSON.stringify(
-            normalizeRespondentInformationFields(
-              input.respondentInformationFields,
-              input.respondentInformationRequired === true ? DEFAULT_RESPONDENT_INFORMATION_FIELDS : [],
-            ),
-          )
+      respondentInformationFields !== undefined
+        ? JSON.stringify(respondentInformationFields)
+        : null,
+      respondentRoleOptions !== undefined
+        ? JSON.stringify(respondentRoleOptions)
         : null,
     ],
   );
@@ -1167,7 +1377,10 @@ async function updateSurveyFormRespondentInformation(
   return row ? mapSurveyForm(row) : null;
 }
 
-async function resolveSurveyForm(executor: DatabaseExecutor, input: Pick<SubmitSurveyResponseInput, "formId" | "formCode">) {
+async function resolveSurveyForm(
+  executor: DatabaseExecutor,
+  input: Pick<SubmitSurveyResponseInput, "formId" | "formCode">,
+) {
   if (input.formId) {
     const form = await getSurveyFormById(executor, input.formId);
 
@@ -1192,16 +1405,41 @@ async function resolveSurveyForm(executor: DatabaseExecutor, input: Pick<SubmitS
 }
 
 async function createSurveyForm(input: CreateSurveyFormInput) {
-  const code = requireText(String(input.code ?? ""), "Survey code") as SurveyFormCode;
+  const code = requireText(
+    String(input.code ?? ""),
+    "Survey code",
+  ) as SurveyFormCode;
   await ensureSurveyFormCode(code);
 
-  return withTransaction(async (client) => createSurveyFormRecord(client, input));
+  return withTransaction(async (client) =>
+    createSurveyFormRecord(client, input),
+  );
 }
 
-async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFormInput) {
+async function createSurveyFormRecord(
+  client: PoolClient,
+  input: CreateSurveyFormInput,
+) {
   const title = requireText(input.title, "Survey title");
-  const code = requireText(String(input.code ?? ""), "Survey code") as SurveyFormCode;
+  const code = requireText(
+    String(input.code ?? ""),
+    "Survey code",
+  ) as SurveyFormCode;
   const sections = input.sections ?? [];
+  const respondentInformationFields = normalizeRespondentInformationFields(
+    input.respondentInformationFields,
+    input.respondentInformationRequired === false
+      ? []
+      : DEFAULT_RESPONDENT_INFORMATION_FIELDS,
+  );
+  const respondentRoleOptions = normalizeRespondentRoleOptionsForFields({
+    fields: respondentInformationFields,
+    roleOptions: input.respondentRoleOptions,
+    fallbackFields:
+      input.respondentInformationRequired === false
+        ? []
+        : DEFAULT_RESPONDENT_INFORMATION_FIELDS,
+  });
 
   await ensureSurveySectionsAllowMultipleSections(client);
 
@@ -1225,9 +1463,10 @@ async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFor
         signature_label,
         respondent_information_required,
         respondent_information_fields,
+        respondent_role_options,
         is_active
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::jsonb, $11, $12, $13::jsonb, $14, $15, $16::jsonb, $17)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::jsonb, $11, $12, $13::jsonb, $14, $15, $16, $17::jsonb, $18::jsonb, $19)
       RETURNING
         id,
         code,
@@ -1247,6 +1486,7 @@ async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFor
         signature_label,
         respondent_information_required,
         respondent_information_fields,
+        respondent_role_options,
         is_active,
         created_at,
         updated_at
@@ -1263,17 +1503,14 @@ async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFor
       sanitizeText(input.introduction),
       JSON.stringify(input.researchers ?? []),
       sanitizeText(input.adviser),
-      sanitizeText(input.instruction) ?? "Please read each statement carefully and select the rating that best reflects your answer.",
+      sanitizeText(input.instruction) ??
+        "Please read each statement carefully and select the rating that best reflects your answer.",
       JSON.stringify(input.scale ?? LIKERT_SCALE),
       sanitizeText(input.voluntaryNote),
       sanitizeText(input.signatureLabel) ?? "Respondent's Signature",
       input.respondentInformationRequired ?? true,
-      JSON.stringify(
-        normalizeRespondentInformationFields(
-          input.respondentInformationFields,
-          input.respondentInformationRequired === false ? [] : DEFAULT_RESPONDENT_INFORMATION_FIELDS,
-        ),
-      ),
+      JSON.stringify(respondentInformationFields),
+      JSON.stringify(respondentRoleOptions),
       input.isActive ?? true,
     ],
   );
@@ -1286,13 +1523,23 @@ async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFor
 
   const form = mapSurveyForm(formRow);
 
-  const usedSectionCodes = await getExistingCodes(client, TABLES.surveySections);
+  const usedSectionCodes = await getExistingCodes(
+    client,
+    TABLES.surveySections,
+  );
   const usedItemCodes = await getExistingCodes(client, TABLES.surveyItems);
 
   for (const [sectionIndex, section] of sections.entries()) {
-    const sectionTitle = requireText(section.title, `Section ${sectionIndex + 1} title`);
+    const sectionTitle = requireText(
+      section.title,
+      `Section ${sectionIndex + 1} title`,
+    );
     const sectionCode = createUniqueCode(
-      createScopedSurveyCode(code, sanitizeText(section.code) ?? sectionTitle, `section_${sectionIndex + 1}`),
+      createScopedSurveyCode(
+        code,
+        sanitizeText(section.code) ?? sectionTitle,
+        `section_${sectionIndex + 1}`,
+      ),
       `section_${sectionIndex + 1}`,
       usedSectionCodes,
     );
@@ -1324,9 +1571,16 @@ async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFor
     }
 
     for (const [itemIndex, item] of section.items.entries()) {
-      const statement = requireText(item.statement, `Section ${sectionIndex + 1} item ${itemIndex + 1} statement`);
+      const statement = requireText(
+        item.statement,
+        `Section ${sectionIndex + 1} item ${itemIndex + 1} statement`,
+      );
       const itemCode = createUniqueCode(
-        createScopedSurveyCode(sectionCode, sanitizeText(item.code) ?? `item_${itemIndex + 1}`, `item_${itemIndex + 1}`),
+        createScopedSurveyCode(
+          sectionCode,
+          sanitizeText(item.code) ?? `item_${itemIndex + 1}`,
+          `item_${itemIndex + 1}`,
+        ),
         `item_${itemIndex + 1}`,
         usedItemCodes,
       );
@@ -1363,15 +1617,21 @@ async function createSurveyFormRecord(client: PoolClient, input: CreateSurveyFor
 }
 
 async function createSurveySeries(input: CreateSurveySeriesInput) {
-  const seriesTitle = requireText(input.surveySeriesTitle, "Survey series title");
+  const seriesTitle = requireText(
+    input.surveySeriesTitle,
+    "Survey series title",
+  );
   const forms = input.forms ?? [];
 
   if (forms.length === 0) {
-    throw new Error("At least one survey form is required to create a survey series.");
+    throw new Error(
+      "At least one survey form is required to create a survey series.",
+    );
   }
 
   const seriesId =
-    sanitizeText(input.surveySeriesId) ?? `${createCodeFromTitle(seriesTitle, "survey_series")}_${Date.now().toString(36)}`;
+    sanitizeText(input.surveySeriesId) ??
+    `${createCodeFromTitle(seriesTitle, "survey_series")}_${Date.now().toString(36)}`;
 
   const createdForms: SurveyQuestionnaireForm[] = [];
 
@@ -1389,7 +1649,10 @@ async function createSurveySeries(input: CreateSurveySeriesInput) {
   return createdForms;
 }
 
-async function createRespondent(executor: DatabaseExecutor, input: CreateRespondentInput) {
+async function createRespondent(
+  executor: DatabaseExecutor,
+  input: CreateRespondentInput,
+) {
   const result = await executor.query<RespondentRow>(
     `
       INSERT INTO ${TABLES.respondents} (
@@ -1431,7 +1694,10 @@ async function createRespondent(executor: DatabaseExecutor, input: CreateRespond
   return mapRespondent(row);
 }
 
-async function getRespondentById(executor: DatabaseExecutor, respondentId: string) {
+async function getRespondentById(
+  executor: DatabaseExecutor,
+  respondentId: string,
+) {
   const result = await executor.query<RespondentRow>(
     `
       SELECT
@@ -1455,7 +1721,10 @@ async function getRespondentById(executor: DatabaseExecutor, respondentId: strin
   return row ? mapRespondent(row) : null;
 }
 
-async function getQuestionnaireSections(executor: DatabaseExecutor, formId: string) {
+async function getQuestionnaireSections(
+  executor: DatabaseExecutor,
+  formId: string,
+) {
   const sectionsResult = await executor.query<SurveySectionRow>(
     `
       SELECT
@@ -1512,7 +1781,11 @@ async function getQuestionnaireSections(executor: DatabaseExecutor, formId: stri
   }));
 }
 
-async function validateSurveyAnswers(executor: DatabaseExecutor, formId: string, answers: SubmitSurveyAnswerInput[]) {
+async function validateSurveyAnswers(
+  executor: DatabaseExecutor,
+  formId: string,
+  answers: SubmitSurveyAnswerInput[],
+) {
   if (answers.length === 0) {
     throw new Error("At least one survey answer is required.");
   }
@@ -1522,7 +1795,9 @@ async function validateSurveyAnswers(executor: DatabaseExecutor, formId: string,
     .filter((itemId, index, itemIds) => itemIds.indexOf(itemId) !== index);
 
   if (duplicateItemIds.length > 0) {
-    throw new Error(`Duplicate survey answer item ids: ${Array.from(new Set(duplicateItemIds)).join(", ")}`);
+    throw new Error(
+      `Duplicate survey answer item ids: ${Array.from(new Set(duplicateItemIds)).join(", ")}`,
+    );
   }
 
   const itemIds = answers.map((answer) => answer.itemId);
@@ -1541,7 +1816,9 @@ async function validateSurveyAnswers(executor: DatabaseExecutor, formId: string,
   const invalidItemIds = itemIds.filter((itemId) => !validItemIds.has(itemId));
 
   if (invalidItemIds.length > 0) {
-    throw new Error(`Survey answers contain items that do not belong to the selected form: ${invalidItemIds.join(", ")}`);
+    throw new Error(
+      `Survey answers contain items that do not belong to the selected form: ${invalidItemIds.join(", ")}`,
+    );
   }
 
   for (const answer of answers) {
@@ -1585,6 +1862,7 @@ export const surveyService = {
           signature_label,
           respondent_information_required,
           respondent_information_fields,
+          respondent_role_options,
           is_active,
           created_at,
           updated_at
@@ -1610,15 +1888,23 @@ export const surveyService = {
     return updateSurveyForm(formId, input);
   },
 
-  async updateSurveyQuestionnaireForm(formId: string, input: UpdateSurveyQuestionnaireInput) {
+  async updateSurveyQuestionnaireForm(
+    formId: string,
+    input: UpdateSurveyQuestionnaireInput,
+  ) {
     return updateSurveyQuestionnaireForm(formId, input);
   },
 
-  async updateSurveyFormRespondentInformation(formId: string, input: UpdateSurveyFormRespondentInformationInput) {
+  async updateSurveyFormRespondentInformation(
+    formId: string,
+    input: UpdateSurveyFormRespondentInformationInput,
+  ) {
     return updateSurveyFormRespondentInformation(formId, input);
   },
 
-  async getQuestionnaireByFormId(formId: string): Promise<SurveyQuestionnaireForm | null> {
+  async getQuestionnaireByFormId(
+    formId: string,
+  ): Promise<SurveyQuestionnaireForm | null> {
     const pool = getPool();
     const form = await getSurveyFormById(pool, formId);
 
@@ -1632,7 +1918,9 @@ export const surveyService = {
     };
   },
 
-  async getQuestionnaireByFormCode(formCode: SurveyFormCode): Promise<SurveyQuestionnaireForm | null> {
+  async getQuestionnaireByFormCode(
+    formCode: SurveyFormCode,
+  ): Promise<SurveyQuestionnaireForm | null> {
     const pool = getPool();
     const form = await getSurveyFormByCode(pool, formCode);
 
@@ -1654,7 +1942,9 @@ export const surveyService = {
     return getRespondentById(getPool(), respondentId);
   },
 
-  async submitSurveyResponse(input: SubmitSurveyResponseInput): Promise<SubmittedSurveyResponse> {
+  async submitSurveyResponse(
+    input: SubmitSurveyResponseInput,
+  ): Promise<SubmittedSurveyResponse> {
     const submission = await withTransaction(async (client) => {
       const form = await resolveSurveyForm(client, input);
 
@@ -1663,11 +1953,16 @@ export const surveyService = {
       }
 
       if (!input.voluntaryConsent) {
-        throw new Error("Voluntary consent is required before submitting the survey response.");
+        throw new Error(
+          "Voluntary consent is required before submitting the survey response.",
+        );
       }
 
       if (form.respondentInformationRequired && !input.respondentId) {
-        validateRespondentInformation(input.respondent, form.respondentInformationFields);
+        validateRespondentInformation(
+          input.respondent,
+          form.respondentInformationFields,
+        );
       }
 
       await validateSurveyAnswers(client, form.id, input.answers);
@@ -1734,13 +2029,19 @@ export const surveyService = {
               created_at,
               updated_at
           `,
-          [response.id, answer.itemId, normalizeLikertValue(Number(answer.rating))],
+          [
+            response.id,
+            answer.itemId,
+            normalizeLikertValue(Number(answer.rating)),
+          ],
         );
 
         const answerRow = answerResult.rows[0];
 
         if (!answerRow) {
-          throw new Error(`Unable to save survey answer for item: ${answer.itemId}`);
+          throw new Error(
+            `Unable to save survey answer for item: ${answer.itemId}`,
+          );
         }
 
         savedAnswers.push(mapSurveyAnswer(answerRow));
@@ -1871,7 +2172,9 @@ export const surveyService = {
     }
 
     if (!response.respondentEmail) {
-      throw new Error("The selected response does not have a respondent email address.");
+      throw new Error(
+        "The selected response does not have a respondent email address.",
+      );
     }
 
     const answers = await getResponseAnswerDetails(responseId);
@@ -1924,8 +2227,14 @@ export const surveyService = {
         `,
         [formId],
       );
-      await client.query(`DELETE FROM ${TABLES.manualSurveyResponseBatches} WHERE form_id = $1`, [formId]);
-      await client.query(`DELETE FROM ${TABLES.surveyResponses} WHERE form_id = $1`, [formId]);
+      await client.query(
+        `DELETE FROM ${TABLES.manualSurveyResponseBatches} WHERE form_id = $1`,
+        [formId],
+      );
+      await client.query(
+        `DELETE FROM ${TABLES.surveyResponses} WHERE form_id = $1`,
+        [formId],
+      );
       await client.query(
         `
           DELETE FROM ${TABLES.surveyItems}
@@ -1936,8 +2245,13 @@ export const surveyService = {
         `,
         [formId],
       );
-      await client.query(`DELETE FROM ${TABLES.surveySections} WHERE form_id = $1`, [formId]);
-      await client.query(`DELETE FROM ${TABLES.surveyForms} WHERE id = $1`, [formId]);
+      await client.query(
+        `DELETE FROM ${TABLES.surveySections} WHERE form_id = $1`,
+        [formId],
+      );
+      await client.query(`DELETE FROM ${TABLES.surveyForms} WHERE id = $1`, [
+        formId,
+      ]);
 
       return form;
     });
@@ -1969,8 +2283,14 @@ export const surveyService = {
         return null;
       }
 
-      await client.query(`DELETE FROM ${TABLES.surveyAnswers} WHERE response_id = $1`, [responseId]);
-      await client.query(`DELETE FROM ${TABLES.surveyResponses} WHERE id = $1`, [responseId]);
+      await client.query(
+        `DELETE FROM ${TABLES.surveyAnswers} WHERE response_id = $1`,
+        [responseId],
+      );
+      await client.query(
+        `DELETE FROM ${TABLES.surveyResponses} WHERE id = $1`,
+        [responseId],
+      );
 
       return mapSurveyResponse(responseRow);
     });

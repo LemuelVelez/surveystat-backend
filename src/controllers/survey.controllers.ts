@@ -14,7 +14,14 @@ import {
   type UpdateSurveyQuestionnaireInput,
   type UpdateSurveySectionInput,
 } from "../services/survey.services.js";
-import type { LikertScaleOption, LikertValue, RespondentInformationField, RespondentRole, SurveyFormCode } from "../database/model/model.js";
+import type {
+  LikertScaleOption,
+  LikertValue,
+  RespondentInformationField,
+  RespondentRole,
+  RespondentRoleOption,
+  SurveyFormCode,
+} from "../database/model/model.js";
 
 function toBoolean(value: unknown, fallback: boolean) {
   if (value === undefined || value === null || value === "") {
@@ -67,7 +74,8 @@ function hasBodyField(body: Record<string, unknown>, key: string) {
 }
 
 function sendError(res: Response, error: unknown, status = 400) {
-  const message = error instanceof Error ? error.message : "Unexpected request error.";
+  const message =
+    error instanceof Error ? error.message : "Unexpected request error.";
 
   res.status(status).json({
     message,
@@ -86,6 +94,16 @@ function toStringArray(value: unknown) {
   return value.map((item) => String(item).trim()).filter(Boolean);
 }
 
+function toOptionalStringArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return Array.from(
+    new Set(value.map((item) => String(item).trim()).filter(Boolean)),
+  );
+}
+
 const validRespondentInformationFields = new Set<RespondentInformationField>([
   "fullName",
   "email",
@@ -94,7 +112,9 @@ const validRespondentInformationFields = new Set<RespondentInformationField>([
   "program",
 ]);
 
-function getRespondentInformationFields(value: unknown): RespondentInformationField[] | undefined {
+function getRespondentInformationFields(
+  value: unknown,
+): RespondentInformationField[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
   }
@@ -106,6 +126,12 @@ function getRespondentInformationFields(value: unknown): RespondentInformationFi
     );
 
   return Array.from(new Set(fields));
+}
+
+function getRespondentRoleOptions(
+  value: unknown,
+): RespondentRoleOption[] | undefined {
+  return toOptionalStringArray(value) as RespondentRoleOption[] | undefined;
 }
 
 function getLikertScale(value: unknown): CreateSurveyFormInput["scale"] {
@@ -189,7 +215,9 @@ function getSurveySections(value: unknown): CreateSurveySectionInput[] {
   });
 }
 
-function getCreateSurveyFormInput(body: Record<string, unknown>): CreateSurveyFormInput {
+function getCreateSurveyFormInput(
+  body: Record<string, unknown>,
+): CreateSurveyFormInput {
   return {
     code: getFormCode(toOptionalString(body.code) ?? ""),
     surveySeriesId: toNullableString(body.surveySeriesId),
@@ -198,7 +226,10 @@ function getCreateSurveyFormInput(body: Record<string, unknown>): CreateSurveyFo
     title: String(body.title ?? ""),
     description: toNullableString(body.description),
     studyTitle: toNullableString(body.studyTitle),
-    documentHeader: body.documentHeader && typeof body.documentHeader === "object" ? (body.documentHeader as Record<string, unknown>) : {},
+    documentHeader:
+      body.documentHeader && typeof body.documentHeader === "object"
+        ? (body.documentHeader as Record<string, unknown>)
+        : {},
     introduction: toNullableString(body.introduction),
     researchers: toStringArray(body.researchers),
     adviser: toNullableString(body.adviser),
@@ -206,36 +237,59 @@ function getCreateSurveyFormInput(body: Record<string, unknown>): CreateSurveyFo
     scale: getLikertScale(body.scale),
     voluntaryNote: toNullableString(body.voluntaryNote),
     signatureLabel: toNullableString(body.signatureLabel),
-    respondentInformationRequired: toBoolean(body.respondentInformationRequired, true),
-    respondentInformationFields: getRespondentInformationFields(body.respondentInformationFields),
+    respondentInformationRequired: toBoolean(
+      body.respondentInformationRequired,
+      true,
+    ),
+    respondentInformationFields: getRespondentInformationFields(
+      body.respondentInformationFields,
+    ),
+    respondentRoleOptions: getRespondentRoleOptions(body.respondentRoleOptions),
     isActive: toBoolean(body.isActive, true),
     sections: getSurveySections(body.sections),
   };
 }
 
-
-function getCreateSurveySeriesInput(body: Record<string, unknown>): CreateSurveySeriesInput {
+function getCreateSurveySeriesInput(
+  body: Record<string, unknown>,
+): CreateSurveySeriesInput {
   const forms = Array.isArray(body.forms) ? body.forms : [];
 
   return {
     surveySeriesId: toNullableString(body.surveySeriesId),
     surveySeriesTitle: String(body.surveySeriesTitle ?? body.title ?? ""),
-    forms: forms.map((form) => getCreateSurveyFormInput(form as Record<string, unknown>)),
+    forms: forms.map((form) =>
+      getCreateSurveyFormInput(form as Record<string, unknown>),
+    ),
   };
 }
 
-
-function getUpdateSurveyFormInput(body: Record<string, unknown>): UpdateSurveyFormInput {
+function getUpdateSurveyFormInput(
+  body: Record<string, unknown>,
+): UpdateSurveyFormInput {
   return {
     title: hasBodyField(body, "title") ? String(body.title ?? "") : undefined,
-    description: hasBodyField(body, "description") ? toNullableString(body.description) : undefined,
-    respondentInformationRequired: hasBodyField(body, "respondentInformationRequired")
+    description: hasBodyField(body, "description")
+      ? toNullableString(body.description)
+      : undefined,
+    respondentInformationRequired: hasBodyField(
+      body,
+      "respondentInformationRequired",
+    )
       ? toBoolean(body.respondentInformationRequired, true)
       : undefined,
-    respondentInformationFields: hasBodyField(body, "respondentInformationFields")
-      ? getRespondentInformationFields(body.respondentInformationFields) ?? []
+    respondentInformationFields: hasBodyField(
+      body,
+      "respondentInformationFields",
+    )
+      ? (getRespondentInformationFields(body.respondentInformationFields) ?? [])
       : undefined,
-    isActive: hasBodyField(body, "isActive") ? toBoolean(body.isActive, true) : undefined,
+    respondentRoleOptions: hasBodyField(body, "respondentRoleOptions")
+      ? (getRespondentRoleOptions(body.respondentRoleOptions) ?? [])
+      : undefined,
+    isActive: hasBodyField(body, "isActive")
+      ? toBoolean(body.isActive, true)
+      : undefined,
   };
 }
 
@@ -243,8 +297,14 @@ function getUpdateSurveyFormRespondentInformationInput(
   body: Record<string, unknown>,
 ): UpdateSurveyFormRespondentInformationInput {
   return {
-    respondentInformationRequired: toBoolean(body.respondentInformationRequired, false),
-    respondentInformationFields: getRespondentInformationFields(body.respondentInformationFields),
+    respondentInformationRequired: toBoolean(
+      body.respondentInformationRequired,
+      false,
+    ),
+    respondentInformationFields: getRespondentInformationFields(
+      body.respondentInformationFields,
+    ),
+    respondentRoleOptions: getRespondentRoleOptions(body.respondentRoleOptions),
   };
 }
 
@@ -284,14 +344,20 @@ function getUpdateSurveySections(value: unknown): UpdateSurveySectionInput[] {
   });
 }
 
-function getUpdateSurveyQuestionnaireInput(body: Record<string, unknown>): UpdateSurveyQuestionnaireInput {
+function getUpdateSurveyQuestionnaireInput(
+  body: Record<string, unknown>,
+): UpdateSurveyQuestionnaireInput {
   return {
     ...getUpdateSurveyFormInput(body),
-    sections: hasBodyField(body, "sections") ? getUpdateSurveySections(body.sections) : undefined,
+    sections: hasBodyField(body, "sections")
+      ? getUpdateSurveySections(body.sections)
+      : undefined,
   };
 }
 
-function getRespondentInput(body: Record<string, unknown>): CreateRespondentInput {
+function getRespondentInput(
+  body: Record<string, unknown>,
+): CreateRespondentInput {
   return {
     fullName: toNullableString(body.fullName),
     email: toNullableString(body.email),
@@ -302,17 +368,24 @@ function getRespondentInput(body: Record<string, unknown>): CreateRespondentInpu
   };
 }
 
-function getSubmitSurveyResponseInput(body: Record<string, unknown>): SubmitSurveyResponseInput {
+function getSubmitSurveyResponseInput(
+  body: Record<string, unknown>,
+): SubmitSurveyResponseInput {
   const answers = Array.isArray(body.answers) ? body.answers : [];
 
   return {
     formId: toOptionalString(body.formId),
     formCode: body.formCode ? getFormCode(body.formCode) : undefined,
     respondentId: toNullableString(body.respondentId),
-    respondent: body.respondent && typeof body.respondent === "object" ? getRespondentInput(body.respondent as Record<string, unknown>) : null,
+    respondent:
+      body.respondent && typeof body.respondent === "object"
+        ? getRespondentInput(body.respondent as Record<string, unknown>)
+        : null,
     respondentSignature: toNullableString(body.respondentSignature),
     respondentSignatureImage: toNullableString(body.respondentSignatureImage),
-    respondentSignatureFileName: toNullableString(body.respondentSignatureFileName),
+    respondentSignatureFileName: toNullableString(
+      body.respondentSignatureFileName,
+    ),
     voluntaryConsent: toBoolean(body.voluntaryConsent, false),
     answers: answers.map((answer) => {
       const answerBody = answer as Record<string, unknown>;
@@ -327,7 +400,9 @@ function getSubmitSurveyResponseInput(body: Record<string, unknown>): SubmitSurv
 
 export async function createSurveyForm(req: Request, res: Response) {
   try {
-    const form = await surveyService.createSurveyForm(getCreateSurveyFormInput(req.body ?? {}));
+    const form = await surveyService.createSurveyForm(
+      getCreateSurveyFormInput(req.body ?? {}),
+    );
 
     res.status(201).json({
       message: "Survey form created successfully.",
@@ -340,7 +415,9 @@ export async function createSurveyForm(req: Request, res: Response) {
 
 export async function createSurveySeries(req: Request, res: Response) {
   try {
-    const forms = await surveyService.createSurveySeries(getCreateSurveySeriesInput(req.body ?? {}));
+    const forms = await surveyService.createSurveySeries(
+      getCreateSurveySeriesInput(req.body ?? {}),
+    );
 
     res.status(201).json({
       message: "Survey series created successfully.",
@@ -387,7 +464,9 @@ export async function getSurveyFormById(req: Request, res: Response) {
 
 export async function getSurveyFormByCode(req: Request, res: Response) {
   try {
-    const formCode = getFormCode(getRouteParam(req.params.formCode, "formCode"));
+    const formCode = getFormCode(
+      getRouteParam(req.params.formCode, "formCode"),
+    );
     const form = await surveyService.getSurveyFormByCode(formCode);
 
     if (!form) {
@@ -405,11 +484,13 @@ export async function getSurveyFormByCode(req: Request, res: Response) {
   }
 }
 
-
 export async function updateSurveyForm(req: Request, res: Response) {
   try {
     const formId = getRouteParam(req.params.formId, "formId");
-    const form = await surveyService.updateSurveyForm(formId, getUpdateSurveyFormInput(req.body ?? {}));
+    const form = await surveyService.updateSurveyForm(
+      formId,
+      getUpdateSurveyFormInput(req.body ?? {}),
+    );
 
     if (!form) {
       res.status(404).json({
@@ -427,7 +508,10 @@ export async function updateSurveyForm(req: Request, res: Response) {
   }
 }
 
-export async function updateSurveyQuestionnaireForm(req: Request, res: Response) {
+export async function updateSurveyQuestionnaireForm(
+  req: Request,
+  res: Response,
+) {
   try {
     const formId = getRouteParam(req.params.formId, "formId");
     const form = await surveyService.updateSurveyQuestionnaireForm(
@@ -472,7 +556,10 @@ export async function deleteSurveyForm(req: Request, res: Response) {
   }
 }
 
-export async function updateSurveyFormRespondentInformation(req: Request, res: Response) {
+export async function updateSurveyFormRespondentInformation(
+  req: Request,
+  res: Response,
+) {
   try {
     const formId = getRouteParam(req.params.formId, "formId");
     const form = await surveyService.updateSurveyFormRespondentInformation(
@@ -518,8 +605,11 @@ export async function getQuestionnaireByFormId(req: Request, res: Response) {
 
 export async function getQuestionnaireByFormCode(req: Request, res: Response) {
   try {
-    const formCode = getFormCode(getRouteParam(req.params.formCode, "formCode"));
-    const questionnaire = await surveyService.getQuestionnaireByFormCode(formCode);
+    const formCode = getFormCode(
+      getRouteParam(req.params.formCode, "formCode"),
+    );
+    const questionnaire =
+      await surveyService.getQuestionnaireByFormCode(formCode);
 
     if (!questionnaire) {
       res.status(404).json({
@@ -538,7 +628,9 @@ export async function getQuestionnaireByFormCode(req: Request, res: Response) {
 
 export async function createRespondent(req: Request, res: Response) {
   try {
-    const respondent = await surveyService.createRespondent(getRespondentInput(req.body ?? {}));
+    const respondent = await surveyService.createRespondent(
+      getRespondentInput(req.body ?? {}),
+    );
 
     res.status(201).json({
       message: "Respondent created successfully.",
@@ -571,7 +663,9 @@ export async function getRespondentById(req: Request, res: Response) {
 
 export async function submitSurveyResponse(req: Request, res: Response) {
   try {
-    const response = await surveyService.submitSurveyResponse(getSubmitSurveyResponseInput(req.body ?? {}));
+    const response = await surveyService.submitSurveyResponse(
+      getSubmitSurveyResponseInput(req.body ?? {}),
+    );
 
     res.status(201).json({
       message: "Survey response submitted successfully.",
@@ -586,8 +680,12 @@ export async function listSurveyResponses(req: Request, res: Response) {
   try {
     const responses = await surveyService.listSurveyResponses({
       formId: req.query.formId ? String(req.query.formId) : undefined,
-      formCode: req.query.formCode ? getFormCode(req.query.formCode) : undefined,
-      respondentId: req.query.respondentId ? String(req.query.respondentId) : undefined,
+      formCode: req.query.formCode
+        ? getFormCode(req.query.formCode)
+        : undefined,
+      respondentId: req.query.respondentId
+        ? String(req.query.respondentId)
+        : undefined,
       submittedOnly: toBoolean(req.query.submittedOnly, true),
       limit: toNumber(req.query.limit),
       offset: toNumber(req.query.offset),
@@ -614,10 +712,14 @@ export async function getResponseAnswers(req: Request, res: Response) {
   }
 }
 
-export async function resendSurveyResponseReviewEmail(req: Request, res: Response) {
+export async function resendSurveyResponseReviewEmail(
+  req: Request,
+  res: Response,
+) {
   try {
     const responseId = getRouteParam(req.params.responseId, "responseId");
-    const result = await surveyService.resendSurveyResponseReviewEmail(responseId);
+    const result =
+      await surveyService.resendSurveyResponseReviewEmail(responseId);
 
     res.status(200).json({
       message: "Survey response review email resent successfully.",
